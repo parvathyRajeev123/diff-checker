@@ -1184,106 +1184,6 @@ const renderWordSegments = (
   });
 };
 
-// ✅ ADD THIS HERE (above RichTextEditor)
-
-const convertRtfToHtml = (rtf: string): string => {
-  let text = rtf;
-
-  // ✅ Remove font/color tables completely
-  text = text
-    .replace(/{\\fonttbl[\s\S]*?}/g, "")
-    .replace(/{\\colortbl[\s\S]*?}/g, "");
-
-  // ✅ Remove header junk
-  text = text.replace(/^{\\rtf1[\s\S]+?\\viewkind\d+\s?/i, "");
-
-  // ✅ Convert line breaks
-  text = text.replace(/\\par[d]?/g, "\n");
-
-  // ✅ Remove control words (but keep content)
-  text = text.replace(/\\[a-z]+\d* ?/g, "");
-
-  // ✅ Remove escaped special chars like \~
-  text = text.replace(/\\~/g, " ");
-
-  // ✅ Decode hex chars like \'92
-  text = text.replace(/\\'([0-9a-f]{2})/gi, (_, hex) =>
-    String.fromCharCode(parseInt(hex, 16))
-  );
-
-  // ✅ Remove field / hyperlink blocks BUT keep URL text
-  text = text.replace(
-    /{\\field[\s\S]*?{\\fldrslt\s*{([^}]*)}}}/gi,
-    "$1"
-  );
-
-  // ✅ Remove leftover braces
-  text = text.replace(/[{}]/g, "");
-
-  // ✅ Remove leftover backslashes before placeholders
-  text = text.replace(/\\([A-Z_]+)/g, "{$1}");
-
-  // ✅ Clean multiple empty lines
-  text = text.replace(/\n\s*\n/g, "\n\n");
-
-  // ✅ Convert to HTML
-  text = text
-    .trim()
-    .replace(/\n/g, "<br>")
-    .replace(/\s{2}/g, "&nbsp;&nbsp;");
-
-  return text;
-};
-
-const convertRtfToHtml = (rtf: string): string => {
-  let text = rtf;
-
-  // Remove font & color tables
-  text = text
-    .replace(/{\\fonttbl[\s\S]*?}/g, "")
-    .replace(/{\\colortbl[\s\S]*?}/g, "");
-
-  // Remove header
-  text = text.replace(/^{\\rtf1[\s\S]+?\\viewkind\d+\s?/i, "");
-
-  // Line breaks
-  text = text.replace(/\\par[d]?/g, "\n");
-
-  // Remove control words
-  text = text.replace(/\\[a-z]+\d* ?/g, "");
-
-  // Replace special spaces
-  text = text.replace(/\\~/g, " ");
-
-  // Decode hex chars
-  text = text.replace(/\\'([0-9a-f]{2})/gi, (_, hex) =>
-    String.fromCharCode(parseInt(hex, 16))
-  );
-
-  // Extract hyperlinks text
-  text = text.replace(
-    /{\\field[\s\S]*?{\\fldrslt\s*{([^}]*)}}}/gi,
-    "$1"
-  );
-
-  // Remove braces
-  text = text.replace(/[{}]/g, "");
-
-  // Fix placeholders like \PRINT_DATE → {PRINT_DATE}
-  text = text.replace(/\\([A-Z_]+)/g, "{$1}");
-
-  // Clean spacing
-  text = text.replace(/\n\s*\n/g, "\n\n");
-
-  // Convert to HTML
-  text = text
-    .trim()
-    .replace(/\n/g, "<br>")
-    .replace(/\s{2}/g, "&nbsp;&nbsp;");
-
-  return text;
-};
-
 const RichTextEditor = ({
   html,
   onHtmlChange,
@@ -1294,9 +1194,6 @@ const RichTextEditor = ({
   placeholder: string;
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
-  const hiddenPasteRef = useRef<HTMLDivElement>(null);
-  ``
-
   const internalHtmlRef = useRef(html);
   const initializedRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(!html);
@@ -1310,17 +1207,7 @@ const RichTextEditor = ({
         internalHtmlRef.current = html;
         setIsEmpty(false);
       }
-      return (
-  <div className="relative">
-    <div
-      ref={editorRef}
-      contentEditable
-      ...
-      onInput={handleInput}
-      onPaste={handlePaste}
-    />
-``
-
+      return;
     }
     if (html !== internalHtmlRef.current) {
       internalHtmlRef.current = html;
@@ -1338,72 +1225,55 @@ const RichTextEditor = ({
     }
   }, [onHtmlChange]);
 
-const handlePaste = useCallback(
-  (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      e.preventDefault();
 
-    const hidden = hiddenPasteRef.current;
-    if (!hidden) return;
+      const clipboardHtml = e.clipboardData.getData('text/html');
+      const clipboardText = e.clipboardData.getData('text/plain');
 
-    hidden.innerHTML = "";
-    hidden.focus();
+      let cleanedHtml: string;
+      const plainTextToHtml = (text: string) =>
+        text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>');
 
-    document.execCommand("paste");
-
-    setTimeout(() => {
-      let html = hidden.innerHTML;
-
-      const clipboard = e.clipboardData;
-      const rtf = clipboard.getData("text/rtf");
-      const plain = clipboard.getData("text/plain");
-
-      // ✅ If HTML is missing or garbage → fallback
-      if (!html || html.includes("{\\rtf")) {
-        if (rtf) {
-          html = convertRtfToHtml(rtf);
-        } else {
-          html = plain
-            .replace(/\n/g, "<br>")
-            .replace(/\t/g, "&nbsp;&nbsp;&nbsp;");
+      if (clipboardHtml) {
+        cleanedHtml = sanitizeHtml(clipboardHtml);
+        // If sanitized HTML lost line breaks that exist in the plain text,
+        // fall back to plain text so blank lines are preserved — BUT only
+        // when the sanitized HTML has no formatting tags.  Falling back to
+        // plain text when formatting (bold/italic/underline) is present
+        // would discard the formatting the user pasted from Word, etc.
+        const hasFormattingTags = /<(b|strong|i|em|u|s|strike|sub|sup)\b/i.test(
+          cleanedHtml
+        );
+        if (!hasFormattingTags) {
+          const htmlBreaks = (cleanedHtml.match(/<br\s*\/?>/gi) || []).length;
+          const textBreaks = clipboardText
+            ? (clipboardText.match(/\n/g) || []).length
+            : 0;
+          if (textBreaks > 0 && htmlBreaks < textBreaks) {
+            cleanedHtml = plainTextToHtml(clipboardText);
+          }
         }
+      } else {
+        cleanedHtml = plainTextToHtml(clipboardText);
       }
 
-      // ✅ Sanitize using your existing function
-      html = sanitizeHtml(html);
+      document.execCommand('insertHTML', false, cleanedHtml);
 
-      // ✅ Insert into editor
-      const selection = window.getSelection();
-      if (!selection || !selection.rangeCount) return;
-
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-
-      const temp = document.createElement("div");
-      temp.innerHTML = html;
-
-      const frag = document.createDocumentFragment();
-      let node;
-      while ((node = temp.firstChild)) {
-        frag.appendChild(node);
-      }
-
-      range.insertNode(frag);
-
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-
-      // ✅ update state
       if (editorRef.current) {
         const current = editorRef.current.innerHTML;
         internalHtmlRef.current = current;
         setIsEmpty(!editorRef.current.textContent?.trim());
         onHtmlChange(current);
       }
-    }, 50);
-  },
-  [onHtmlChange]
-);
+    },
+    [onHtmlChange]
+  );
 
   return (
     <div className="relative">
