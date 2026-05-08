@@ -1189,32 +1189,51 @@ const renderWordSegments = (
 const convertRtfToHtml = (rtf: string): string => {
   let text = rtf;
 
+  // ✅ Remove font/color tables completely
   text = text
-    .replace(/^{\\rtf1[\s\S]+?\\viewkind\d+\s?/i, "")
-    .replace(/\\pard/g, "\n");
+    .replace(/{\\fonttbl[\s\S]*?}/g, "")
+    .replace(/{\\colortbl[\s\S]*?}/g, "");
 
+  // ✅ Remove header junk
+  text = text.replace(/^{\\rtf1[\s\S]+?\\viewkind\d+\s?/i, "");
+
+  // ✅ Convert line breaks
   text = text.replace(/\\par[d]?/g, "\n");
 
-  text = text
-    .replace(/\\b\s([^\\]+?)\\b0/g, "<b>$1</b>")
-    .replace(/\\i\s([^\\]+?)\\i0/g, "<i>$1</i>")
-    .replace(/\\ul\s([^\\]+?)\\ulnone/g, "<u>$1</u>");
-
+  // ✅ Remove control words (but keep content)
   text = text.replace(/\\[a-z]+\d* ?/g, "");
 
+  // ✅ Remove escaped special chars like \~
+  text = text.replace(/\\~/g, " ");
+
+  // ✅ Decode hex chars like \'92
   text = text.replace(/\\'([0-9a-f]{2})/gi, (_, hex) =>
     String.fromCharCode(parseInt(hex, 16))
   );
 
+  // ✅ Remove field / hyperlink blocks BUT keep URL text
+  text = text.replace(
+    /{\\field[\s\S]*?{\\fldrslt\s*{([^}]*)}}}/gi,
+    "$1"
+  );
+
+  // ✅ Remove leftover braces
   text = text.replace(/[{}]/g, "");
 
+  // ✅ Remove leftover backslashes before placeholders
+  text = text.replace(/\\([A-Z_]+)/g, "{$1}");
+
+  // ✅ Clean multiple empty lines
+  text = text.replace(/\n\s*\n/g, "\n\n");
+
+  // ✅ Convert to HTML
   text = text
+    .trim()
     .replace(/\n/g, "<br>")
     .replace(/\s{2}/g, "&nbsp;&nbsp;");
 
-  return text.trim();
+  return text;
 };
-``
 
 const RichTextEditor = ({
   html,
