@@ -1235,46 +1235,55 @@ const handlePaste = useCallback(
     let text = clipboard.getData('text/plain');
     let rtf = clipboard.getData('text/rtf');
 
-    // HTML paste
+    // If browser HTML available
     if (html) {
       html = sanitizeHtml(html);
       document.execCommand('insertHTML', false, html);
     }
 
-    // RTF paste (desktop apps)
+    // If copied from desktop app (RTF)
     else if (rtf) {
-      let cleanText = rtf;
+      let clean = rtf;
 
-      // Remove font/color tables
-      cleanText = cleanText.replace(/{\\fonttbl[\s\S]*?}/g, '');
-      cleanText = cleanText.replace(/{\\colortbl[\s\S]*?}/g, '');
-      cleanText = cleanText.replace(/{\\stylesheet[\s\S]*?}/g, '');
+      // Remove groups like fonttbl colortbl etc
+      clean = clean.replace(/{\\fonttbl[\s\S]*?}/g, '');
+      clean = clean.replace(/{\\colortbl[\s\S]*?}/g, '');
+      clean = clean.replace(/{\\stylesheet[\s\S]*?}/g, '');
+      clean = clean.replace(/{\\info[\s\S]*?}/g, '');
 
-      // Convert paragraphs
-      cleanText = cleanText.replace(/\\par[d]?/g, '<br>');
+      // Convert paragraph
+      clean = clean.replace(/\\par[d]?/g, '<br>');
 
-      // Remove all RTF commands
-      cleanText = cleanText.replace(/\\[a-z]+\d* ?/gi, '');
+      // Remove unicode tags
+      clean = clean.replace(/\\u-?\d+\??/g, '');
+
+      // Remove escaped spaces
+      clean = clean.replace(/\\~/g, ' ');
+
+      // Remove hyperlinks / fields
+      clean = clean.replace(/\\field/g, '');
+      clean = clean.replace(/\\fldinst/g, '');
+      clean = clean.replace(/\\fldrslt/g, '');
+
+      // Remove all commands like \b \i \ul etc
+      clean = clean.replace(/\\[a-zA-Z]+\d* ?/g, '');
 
       // Remove braces
-      cleanText = cleanText.replace(/[{}]/g, '');
+      clean = clean.replace(/[{}]/g, '');
 
-      cleanText = cleanText.trim();
+      // Clean extra spaces
+      clean = clean.replace(/\s+/g, ' ').trim();
 
-      document.execCommand(
-        'insertHTML',
-        false,
-        cleanText
-      );
+      document.execCommand('insertHTML', false, clean);
     }
 
     // Plain text fallback
     else {
-      const escaped = text
+      const clean = text
         .replace(/\n/g, '<br>')
         .replace(/  /g, '&nbsp;&nbsp;');
 
-      document.execCommand('insertHTML', false, escaped);
+      document.execCommand('insertHTML', false, clean);
     }
 
     requestAnimationFrame(() => {
