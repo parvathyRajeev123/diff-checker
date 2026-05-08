@@ -1,5 +1,12 @@
 import { Button, Label } from 'react-aria-components';
 import React, { useCallback, useRef, useState } from 'react';
+import 'rtf.js';
+
+declare global {
+  interface Window {
+    RTFJS: any;
+  }
+}
 
 type ChangeType =
   | 'text_change'
@@ -1226,59 +1233,44 @@ const RichTextEditor = ({
   }, [onHtmlChange]);
 
 const handlePaste = useCallback(
-  (e: React.ClipboardEvent<HTMLDivElement>) => {
+  async (e: React.ClipboardEvent<HTMLDivElement>) => {
     e.preventDefault();
 
     const clipboard = e.clipboardData;
 
-    let html = clipboard.getData('text/html');
-    let rtf = clipboard.getData('text/rtf');
-    let text = clipboard.getData('text/plain');
+    const html = clipboard.getData('text/html');
+    const rtf = clipboard.getData('text/rtf');
+    const text = clipboard.getData('text/plain');
 
-    // Browser HTML copy
+    // 1. Native HTML copy (browser / word / outlook)
     if (html) {
-      html = sanitizeHtml(html);
-      document.execCommand('insertHTML', false, html);
+      const clean = sanitizeHtml(html);
+      document.execCommand('insertHTML', false, clean);
     }
 
-    // Desktop apps RTF copy
+    // 2. RTF copy from desktop translator apps
     else if (rtf) {
-      let rich = rtf;
+      try {
+        const doc = new (window as any).RTFJS.Document(rtf);
+        const rendered = await doc.render();
 
-      // Remove headers
-      rich = rich.replace(/{\\fonttbl[\s\S]*?}/g, '');
-      rich = rich.replace(/{\\colortbl[\s\S]*?}/g, '');
-      rich = rich.replace(/{\\stylesheet[\s\S]*?}/g, '');
+        const container = document.createElement('div');
+        rendered.forEach((node: Node) => container.appendChild(node));
 
-      // Formatting conversions
-      rich = rich.replace(/\\b (.*?)\\b0/g, '<b>$1</b>');
-      rich = rich.replace(/\\i (.*?)\\i0/g, '<i>$1</i>');
-      rich = rich.replace(/\\ul (.*?)\\ulnone/g, '<u>$1</u>');
+        const clean = sanitizeHtml(container.innerHTML);
 
-      // Paragraphs
-      rich = rich.replace(/\\par[d]?/g, '<br>');
+        document.execCommand('insertHTML', false, clean);
+      } catch (err) {
+        // fallback plain text
+        const fallback = text
+          .replace(/\n/g, '<br>')
+          .replace(/  /g, '&nbsp;&nbsp;');
 
-      // Spaces
-      rich = rich.replace(/\\~/g, '&nbsp;');
-
-      // Hyperlinks
-      rich = rich.replace(
-        /HYPERLINK "(.*?)"/g,
-        '$1'
-      );
-
-      // Remove remaining commands
-      rich = rich.replace(/\\[a-z]+\d* ?/gi, '');
-
-      // Remove braces
-      rich = rich.replace(/[{}]/g, '');
-
-      rich = sanitizeHtml(rich);
-
-      document.execCommand('insertHTML', false, rich);
+        document.execCommand('insertHTML', false, fallback);
+      }
     }
 
-    // Plain text fallback
+    // 3. Plain text
     else {
       const clean = text
         .replace(/\n/g, '<br>')
@@ -1291,7 +1283,6 @@ const handlePaste = useCallback(
       if (!editorRef.current) return;
 
       const current = editorRef.current.innerHTML;
-
       internalHtmlRef.current = current;
       setIsEmpty(!editorRef.current.textContent?.trim());
       onHtmlChange(current);
