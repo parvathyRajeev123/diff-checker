@@ -1232,49 +1232,50 @@ const handlePaste = useCallback(
     const clipboard = e.clipboardData;
 
     let html = clipboard.getData('text/html');
-    let text = clipboard.getData('text/plain');
     let rtf = clipboard.getData('text/rtf');
+    let text = clipboard.getData('text/plain');
 
-    // If browser HTML available
+    // Browser HTML copy
     if (html) {
       html = sanitizeHtml(html);
       document.execCommand('insertHTML', false, html);
     }
 
-    // If copied from desktop app (RTF)
+    // Desktop apps RTF copy
     else if (rtf) {
-      let clean = rtf;
+      let rich = rtf;
 
-      // Remove groups like fonttbl colortbl etc
-      clean = clean.replace(/{\\fonttbl[\s\S]*?}/g, '');
-      clean = clean.replace(/{\\colortbl[\s\S]*?}/g, '');
-      clean = clean.replace(/{\\stylesheet[\s\S]*?}/g, '');
-      clean = clean.replace(/{\\info[\s\S]*?}/g, '');
+      // Remove headers
+      rich = rich.replace(/{\\fonttbl[\s\S]*?}/g, '');
+      rich = rich.replace(/{\\colortbl[\s\S]*?}/g, '');
+      rich = rich.replace(/{\\stylesheet[\s\S]*?}/g, '');
 
-      // Convert paragraph
-      clean = clean.replace(/\\par[d]?/g, '<br>');
+      // Formatting conversions
+      rich = rich.replace(/\\b (.*?)\\b0/g, '<b>$1</b>');
+      rich = rich.replace(/\\i (.*?)\\i0/g, '<i>$1</i>');
+      rich = rich.replace(/\\ul (.*?)\\ulnone/g, '<u>$1</u>');
 
-      // Remove unicode tags
-      clean = clean.replace(/\\u-?\d+\??/g, '');
+      // Paragraphs
+      rich = rich.replace(/\\par[d]?/g, '<br>');
 
-      // Remove escaped spaces
-      clean = clean.replace(/\\~/g, ' ');
+      // Spaces
+      rich = rich.replace(/\\~/g, '&nbsp;');
 
-      // Remove hyperlinks / fields
-      clean = clean.replace(/\\field/g, '');
-      clean = clean.replace(/\\fldinst/g, '');
-      clean = clean.replace(/\\fldrslt/g, '');
+      // Hyperlinks
+      rich = rich.replace(
+        /HYPERLINK "(.*?)"/g,
+        '$1'
+      );
 
-      // Remove all commands like \b \i \ul etc
-      clean = clean.replace(/\\[a-zA-Z]+\d* ?/g, '');
+      // Remove remaining commands
+      rich = rich.replace(/\\[a-z]+\d* ?/gi, '');
 
       // Remove braces
-      clean = clean.replace(/[{}]/g, '');
+      rich = rich.replace(/[{}]/g, '');
 
-      // Clean extra spaces
-      clean = clean.replace(/\s+/g, ' ').trim();
+      rich = sanitizeHtml(rich);
 
-      document.execCommand('insertHTML', false, clean);
+      document.execCommand('insertHTML', false, rich);
     }
 
     // Plain text fallback
