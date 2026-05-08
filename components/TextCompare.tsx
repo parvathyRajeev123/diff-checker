@@ -1298,7 +1298,7 @@ const RichTextEditor = ({
     });
   },
   [onHtmlChange]
-);
+);*/
   
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1345,7 +1345,7 @@ const RichTextEditor = ({
       onHtmlChange(html);
     }, 0);
   }}
-/>*/
+/>
 
 const TextCompare = () => {
   const [leftHtml, setLeftHtml] = useState('');
