@@ -1227,34 +1227,22 @@ const RichTextEditor = ({
 
 const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-
-    const clipboard = e.clipboardData;
-
-    let html = clipboard.getData('text/html');
-    let text = clipboard.getData('text/plain');
-
-    if (html) {
-      const clean = sanitizeHtml(html);
-      document.execCommand('insertHTML', false, clean);
-    } else {
-      const clean = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>')
-        .replace(/  /g, '&nbsp;&nbsp;');
-
-      document.execCommand('insertHTML', false, clean);
-    }
-
-    requestAnimationFrame(() => {
+    // Let browser handle native Windows/VDI clipboard first
+    setTimeout(() => {
       if (!editorRef.current) return;
+
+      let html = editorRef.current.innerHTML;
+
+      html = sanitizeHtml(html);
+
+      editorRef.current.innerHTML = html;
+
       const current = editorRef.current.innerHTML;
       internalHtmlRef.current = current;
+
       setIsEmpty(!editorRef.current.textContent?.trim());
       onHtmlChange(current);
-    });
+    }, 30);
   },
   [onHtmlChange]
 );
