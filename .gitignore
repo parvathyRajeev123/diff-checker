@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+
+# build artifacts
+build-manifest.json
+client-build-manifest.json
+client-reference-manifest.json
+next-font-manifest.json
+pages-manifest.json
+react-loadable-manifest.json
+index.html
+
+# misc
+.DS_Store
+*.pem
+.env*
+!.env.example

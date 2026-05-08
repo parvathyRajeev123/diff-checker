@@ -1,4 +1,4 @@
-import TextCompare from '../../../src/components/TextCompare';
+import TextCompare from '../components/TextCompare';
  
 const TextComparePage = () => {
  
