@@ -1235,6 +1235,55 @@ const convertRtfToHtml = (rtf: string): string => {
   return text;
 };
 
+const convertRtfToHtml = (rtf: string): string => {
+  let text = rtf;
+
+  // Remove font & color tables
+  text = text
+    .replace(/{\\fonttbl[\s\S]*?}/g, "")
+    .replace(/{\\colortbl[\s\S]*?}/g, "");
+
+  // Remove header
+  text = text.replace(/^{\\rtf1[\s\S]+?\\viewkind\d+\s?/i, "");
+
+  // Line breaks
+  text = text.replace(/\\par[d]?/g, "\n");
+
+  // Remove control words
+  text = text.replace(/\\[a-z]+\d* ?/g, "");
+
+  // Replace special spaces
+  text = text.replace(/\\~/g, " ");
+
+  // Decode hex chars
+  text = text.replace(/\\'([0-9a-f]{2})/gi, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16))
+  );
+
+  // Extract hyperlinks text
+  text = text.replace(
+    /{\\field[\s\S]*?{\\fldrslt\s*{([^}]*)}}}/gi,
+    "$1"
+  );
+
+  // Remove braces
+  text = text.replace(/[{}]/g, "");
+
+  // Fix placeholders like \PRINT_DATE → {PRINT_DATE}
+  text = text.replace(/\\([A-Z_]+)/g, "{$1}");
+
+  // Clean spacing
+  text = text.replace(/\n\s*\n/g, "\n\n");
+
+  // Convert to HTML
+  text = text
+    .trim()
+    .replace(/\n/g, "<br>")
+    .replace(/\s{2}/g, "&nbsp;&nbsp;");
+
+  return text;
+};
+
 const RichTextEditor = ({
   html,
   onHtmlChange,
@@ -1245,6 +1294,9 @@ const RichTextEditor = ({
   placeholder: string;
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
+  const hiddenPasteRef = useRef<HTMLDivElement>(null);
+  ``
+
   const internalHtmlRef = useRef(html);
   const initializedRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(!html);
@@ -1258,7 +1310,17 @@ const RichTextEditor = ({
         internalHtmlRef.current = html;
         setIsEmpty(false);
       }
-      return;
+      return (
+  <div className="relative">
+    <div
+      ref={editorRef}
+      contentEditable
+      ...
+      onInput={handleInput}
+      onPaste={handlePaste}
+    />
+``
+
     }
     if (html !== internalHtmlRef.current) {
       internalHtmlRef.current = html;
@@ -1280,71 +1342,65 @@ const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
     e.preventDefault();
 
-    const clipboard = e.clipboardData;
+    const hidden = hiddenPasteRef.current;
+    if (!hidden) return;
 
-    const htmlData = clipboard.getData("text/html");
-    const rtfData = clipboard.getData("text/rtf");
-    const textData = clipboard.getData("text/plain");
+    hidden.innerHTML = "";
+    hidden.focus();
 
-    const isVDIPlainOnly = !htmlData && !rtfData && textData;
+    document.execCommand("paste");
 
-    let html = htmlData;
+    setTimeout(() => {
+      let html = hidden.innerHTML;
 
-    // ✅ Try RTF (fallback)
-    if (!html && rtfData) {
-  html = convertRtfToHtml(rtfData);
-}
+      const clipboard = e.clipboardData;
+      const rtf = clipboard.getData("text/rtf");
+      const plain = clipboard.getData("text/plain");
 
-    // ✅ Plain text fallback (VDI case)
-    if (!html && textData) {
-      const enhancePlainText = (text: string) => {
-        return text
-          .replace(/^\s*•\s+(.*)$/gm, "<li>$1</li>")
-          .replace(/^\s*\d+\.\s+(.*)$/gm, "<li>$1</li>")
-          .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-          .replace(/\*(.*?)\*/g, "<i>$1</i>");
-      };
+      // ✅ If HTML is missing or garbage → fallback
+      if (!html || html.includes("{\\rtf")) {
+        if (rtf) {
+          html = convertRtfToHtml(rtf);
+        } else {
+          html = plain
+            .replace(/\n/g, "<br>")
+            .replace(/\t/g, "&nbsp;&nbsp;&nbsp;");
+        }
+      }
 
-      html = enhancePlainText(textData).replace(/\n/g, "<br>");
-    }
+      // ✅ Sanitize using your existing function
+      html = sanitizeHtml(html);
 
-    // ✅ Warning (optional but useful)
-    if (isVDIPlainOnly) {
-      console.warn("VDI limitation: Only plain text available from clipboard");
-    }
+      // ✅ Insert into editor
+      const selection = window.getSelection();
+      if (!selection || !selection.rangeCount) return;
 
-    // ✅ Sanitize using your existing function
-    html = sanitizeHtml(html);
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
 
-    // ✅ Insert at cursor
-    const selection = window.getSelection();
-    if (!selection || !selection.rangeCount) return;
+      const temp = document.createElement("div");
+      temp.innerHTML = html;
 
-    const range = selection.getRangeAt(0);
-    range.deleteContents();
+      const frag = document.createDocumentFragment();
+      let node;
+      while ((node = temp.firstChild)) {
+        frag.appendChild(node);
+      }
 
-    const temp = document.createElement("div");
-    temp.innerHTML = html;
+      range.insertNode(frag);
 
-    const frag = document.createDocumentFragment();
-    let node;
-    while ((node = temp.firstChild)) {
-      frag.appendChild(node);
-    }
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
 
-    range.insertNode(frag);
-
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // ✅ Update state
-    if (editorRef.current) {
-      const current = editorRef.current.innerHTML;
-      internalHtmlRef.current = current;
-      setIsEmpty(!editorRef.current.textContent?.trim());
-      onHtmlChange(current);
-    }
+      // ✅ update state
+      if (editorRef.current) {
+        const current = editorRef.current.innerHTML;
+        internalHtmlRef.current = current;
+        setIsEmpty(!editorRef.current.textContent?.trim());
+        onHtmlChange(current);
+      }
+    }, 50);
   },
   [onHtmlChange]
 );
