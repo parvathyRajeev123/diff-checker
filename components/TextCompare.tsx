@@ -1235,28 +1235,36 @@ const handlePaste = useCallback(
     let text = clipboard.getData('text/plain');
     let rtf = clipboard.getData('text/rtf');
 
-    // If HTML available
+    // HTML paste
     if (html) {
       html = sanitizeHtml(html);
       document.execCommand('insertHTML', false, html);
     }
 
-    // If RTF only (desktop apps)
+    // RTF paste (desktop apps)
     else if (rtf) {
-      const converted = rtf
-        .replace(/\\par[d]?/g, '<br>')
-        .replace(/\\b /g, '<b>')
-        .replace(/\\b0/g, '</b>')
-        .replace(/\\i /g, '<i>')
-        .replace(/\\i0/g, '</i>')
-        .replace(/\\ul /g, '<u>')
-        .replace(/\\ulnone/g, '</u>')
-        .replace(/[{}\\][a-z0-9]+ ?/gi, '');
+      let cleanText = rtf;
+
+      // Remove font/color tables
+      cleanText = cleanText.replace(/{\\fonttbl[\s\S]*?}/g, '');
+      cleanText = cleanText.replace(/{\\colortbl[\s\S]*?}/g, '');
+      cleanText = cleanText.replace(/{\\stylesheet[\s\S]*?}/g, '');
+
+      // Convert paragraphs
+      cleanText = cleanText.replace(/\\par[d]?/g, '<br>');
+
+      // Remove all RTF commands
+      cleanText = cleanText.replace(/\\[a-z]+\d* ?/gi, '');
+
+      // Remove braces
+      cleanText = cleanText.replace(/[{}]/g, '');
+
+      cleanText = cleanText.trim();
 
       document.execCommand(
         'insertHTML',
         false,
-        sanitizeHtml(converted)
+        cleanText
       );
     }
 
