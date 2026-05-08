@@ -120,10 +120,10 @@ const sanitizeHtml = (html: string): string => {
   }
   result = result
     .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[ \u00A0]{2,}/g, (match) => {
+    .replace(/[  ]{2,}/g, (match) => {
       let out = '';
       for (let i = 0; i < match.length; i++) {
-        out += i % 2 === 0 ? '\u00A0' : ' ';
+        out += i % 2 === 0 ? ' ' : ' ';
       }
       return out;
     })
@@ -335,7 +335,7 @@ const computeWordDiff = (
   const newTokens = tokenizeHtmlLine(newLine.html);
 
   // Helper to check if a string is whitespace-only (including non-breaking spaces)
-  const isWsOnly = (s: string): boolean => /^[\s\u00A0]+$/.test(s);
+  const isWsOnly = (s: string): boolean => /^[\s ]+$/.test(s);
 
   // Normalize whitespace tokens to single space for LCS alignment
   // This prevents identical whitespace tokens from being unmatched due to LCS path ambiguity
@@ -590,7 +590,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   const leftNonEmptyLines = leftLines.filter((l) => l.text.length > 0);
   const rightNonEmptyLines = rightLines.filter((l) => l.text.length > 0);
   const normalizeWsGlobal = (s: string): string =>
-    s.replace(/[\s\u00A0]+/g, ' ').trim();
+    s.replace(/[\s ]+/g, ' ').trim();
   const leftFullText = normalizeWsGlobal(
     leftNonEmptyLines.map((l) => l.text).join(' ')
   );
@@ -612,7 +612,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   // ── Shared helpers for marker-based line-break handling ──
   // These are used by both the pre-check (same text, different breaks)
   // and emitChunk (misaligned lines with text + break changes).
-  const LINE_BREAK_MARKER = '\u21B5'; // ↵
+  const LINE_BREAK_MARKER = '↵'; // ↵
   const markerRe = new RegExp(LINE_BREAK_MARKER, 'g');
 
   const joinWithMarkers = (lines: HtmlLine[]): HtmlLine => {
@@ -731,7 +731,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
 
       // Normalize whitespace to detect line break changes even when spacing differs
       const normalizeWs = (s: string): string =>
-        s.replace(/[\s\u00A0]+/g, ' ').trim();
+        s.replace(/[\s ]+/g, ' ').trim();
       const isLineBreakChange =
         !linesMatch &&
         normalizeWs(leftJoinedText) === normalizeWs(rightJoinedText);
@@ -752,7 +752,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
           (s) =>
             s.changeType !== undefined &&
             s.changeType !== 'spacing_change' &&
-            !/^[\s\u00A0]+$/.test(s.text)
+            !/^[\s ]+$/.test(s.text)
         );
 
         if (hasWordChanges) {
@@ -1154,7 +1154,7 @@ const getSegmentHighlightClass = (
     case 'strikethrough_change':
       return `bg-pink-200 ${base}`;
     case 'spacing_change':
-  return `bg-orange-400 text-black ${base}`;
+      return `bg-orange-400 text-black ${base}`;
     case 'line_break_change':
       return `bg-emerald-200 ${base}`;
     case 'other_formatting_change':
@@ -1321,50 +1321,47 @@ const TextCompare = () => {
   const [isEditing, setIsEditing] = useState(true);
   const [isIdentical, setIsIdentical] = useState(false);
   const saveHistory = (left: string, right: string) => {
-  const newHistory = history.slice(0, historyIndex + 1);
-
-  newHistory.push({ left, right });
-
-  setHistory(newHistory);
-  setHistoryIndex(newHistory.length - 1);
-};
-  
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push({ left, right });
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  };
 
   const btnPrimary =
-"rounded-md bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700";
+    'rounded-md bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700';
 
-const btnDanger =
-  "rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700";
+  const btnDanger =
+    'rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700';
 
-const btnSecondary =
-  "rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700";
+  const btnSecondary =
+    'rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700';
 
   const handleCompare = useCallback(() => {
-  const result = computeDiff(leftHtml, rightHtml);
+    const result = computeDiff(leftHtml, rightHtml);
 
-  setDiffResult(result);
-  setIsEditing(false);
+    setDiffResult(result);
+    setIsEditing(false);
 
-  const identical =
-    result.left.every((l) => l.type === "unchanged") &&
-    result.right.every((l) => l.type === "unchanged");
+    const identical =
+      result.left.every((l) => l.type === 'unchanged') &&
+      result.right.every((l) => l.type === 'unchanged');
 
-  setIsIdentical(identical);
-}, [leftHtml, rightHtml]);
+    setIsIdentical(identical);
+  }, [leftHtml, rightHtml]);
 
   const handleClearAll = useCallback(() => {
-  setLeftHtml("");
-  setRightHtml("");
-  setDiffResult(null);
-  setIsEditing(true);
-  setIsIdentical(false);
-}, []);
+    setLeftHtml('');
+    setRightHtml('');
+    setDiffResult(null);
+    setIsEditing(true);
+    setIsIdentical(false);
+  }, []);
 
   const handleEditTexts = useCallback(() => {
-  setIsEditing(true);
-  setDiffResult(null);
-  setIsIdentical(false);
-}, []);
+    setIsEditing(true);
+    setDiffResult(null);
+    setIsIdentical(false);
+  }, []);
 
   const handleSwitchTexts = useCallback(() => {
     const tmpLeft = leftHtml;
@@ -1374,14 +1371,16 @@ const btnSecondary =
   }, [leftHtml, rightHtml]);
 
   const handleLeftHtmlChange = useCallback((newHtml: string) => {
-  setLeftHtml(newHtml);
-  saveHistory(newHtml, rightHtml);
-}, [rightHtml, history, historyIndex]);
+    setLeftHtml(newHtml);
+    saveHistory(newHtml, rightHtml);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightHtml, history, historyIndex]);
 
   const handleRightHtmlChange = useCallback((newHtml: string) => {
-  setRightHtml(newHtml);
-  saveHistory(leftHtml, newHtml);
-}, [leftHtml, history, historyIndex]);
+    setRightHtml(newHtml);
+    saveHistory(leftHtml, newHtml);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftHtml, history, historyIndex]);
 
   const renderDiffPanel = (lines: DiffLine[], side: 'left' | 'right') => {
     return (
@@ -1478,46 +1477,41 @@ const btnSecondary =
   return (
     <div className="flex flex-col gap-4 p-10">
       {!isEditing && isIdentical && (
-  <div className="flex justify-center">
-    <div className="rounded bg-green-500 px-4 py-1 text-white text-sm font-medium">
-      The two texts are identical!
-    </div>
-  </div>
-)}
+        <div className="flex justify-center">
+          <div className="rounded bg-green-500 px-4 py-1 text-white text-sm font-medium">
+            The two texts are identical!
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-3 items-center gap-2">
-
-  {/* LEFT SIDE */}
-  <div className="flex gap-2">
-    {!isEditing && (
-      <Button onPress={handleEditTexts} className={btnSecondary}>
-        Edit texts
-      </Button>
-    )}
-  </div>
-  {/* CENTER */}
-  <div className="flex justify-center">
-    <Button onPress={handleCompare} className={btnPrimary}>
-      Compare
-    </Button>
-  </div>
+        {/* LEFT SIDE */}
+        <div className="flex gap-2">
+          {!isEditing && (
+            <Button onPress={handleEditTexts} className={btnSecondary}>
+              Edit texts
+            </Button>
+          )}
+        </div>
+        {/* CENTER */}
+        <div className="flex justify-center">
+          <Button onPress={handleCompare} className={btnPrimary}>
+            Compare
+          </Button>
+        </div>
         {/* RIGHT SIDE */}
-  <div className="flex justify-end items-center gap-3">
-    {renderStats()}
-
-    <Button onPress={handleUndo} className={btnSecondary}>
-      Undo
-    </Button>
-
-    <Button onPress={handleRedo} className={btnSecondary}>
-      Redo
-    </Button>
-
-    <Button onPress={handleClearAll} className={btnDanger}>
-      Clear all
-    </Button>
-  </div>
-
-</div>
+        <div className="flex justify-end items-center gap-3">
+          {renderStats()}
+          <Button onPress={handleUndo} className={btnSecondary}>
+            Undo
+          </Button>
+          <Button onPress={handleRedo} className={btnSecondary}>
+            Redo
+          </Button>
+          <Button onPress={handleClearAll} className={btnDanger}>
+            Clear all
+          </Button>
+        </div>
+      </div>
 
       {isEditing ? (
         <div className="grid grid-cols-2 gap-4">
