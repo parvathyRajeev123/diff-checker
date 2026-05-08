@@ -1184,6 +1184,38 @@ const renderWordSegments = (
   });
 };
 
+// ✅ ADD THIS HERE (above RichTextEditor)
+
+const convertRtfToHtml = (rtf: string): string => {
+  let text = rtf;
+
+  text = text
+    .replace(/^{\\rtf1[\s\S]+?\\viewkind\d+\s?/i, "")
+    .replace(/\\pard/g, "\n");
+
+  text = text.replace(/\\par[d]?/g, "\n");
+
+  text = text
+    .replace(/\\b\s([^\\]+?)\\b0/g, "<b>$1</b>")
+    .replace(/\\i\s([^\\]+?)\\i0/g, "<i>$1</i>")
+    .replace(/\\ul\s([^\\]+?)\\ulnone/g, "<u>$1</u>");
+
+  text = text.replace(/\\[a-z]+\d* ?/g, "");
+
+  text = text.replace(/\\'([0-9a-f]{2})/gi, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16))
+  );
+
+  text = text.replace(/[{}]/g, "");
+
+  text = text
+    .replace(/\n/g, "<br>")
+    .replace(/\s{2}/g, "&nbsp;&nbsp;");
+
+  return text.trim();
+};
+``
+
 const RichTextEditor = ({
   html,
   onHtmlChange,
@@ -1241,11 +1273,8 @@ const handlePaste = useCallback(
 
     // ✅ Try RTF (fallback)
     if (!html && rtfData) {
-      html = rtfData
-        .replace(/\\par/g, "<br>")
-        .replace(/\\b (.*?)\\b0/g, "<b>$1</b>")
-        .replace(/\\i (.*?)\\i0/g, "<i>$1</i>");
-    }
+  html = convertRtfToHtml(rtfData);
+}
 
     // ✅ Plain text fallback (VDI case)
     if (!html && textData) {
