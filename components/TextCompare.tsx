@@ -1,12 +1,5 @@
 import { Button, Label } from 'react-aria-components';
 import React, { useCallback, useRef, useState } from 'react';
-import 'rtf.js';
-
-declare global {
-  interface Window {
-    RTFJS: any;
-  }
-}
 
 type ChangeType =
   | 'text_change'
@@ -1233,46 +1226,22 @@ const RichTextEditor = ({
   }, [onHtmlChange]);
 
 const handlePaste = useCallback(
-  async (e: React.ClipboardEvent<HTMLDivElement>) => {
+  (e: React.ClipboardEvent<HTMLDivElement>) => {
     e.preventDefault();
 
     const clipboard = e.clipboardData;
 
-    const html = clipboard.getData('text/html');
-    const rtf = clipboard.getData('text/rtf');
-    const text = clipboard.getData('text/plain');
+    let html = clipboard.getData('text/html');
+    let text = clipboard.getData('text/plain');
 
-    // 1. Native HTML copy (browser / word / outlook)
     if (html) {
       const clean = sanitizeHtml(html);
       document.execCommand('insertHTML', false, clean);
-    }
-
-    // 2. RTF copy from desktop translator apps
-    else if (rtf) {
-      try {
-        const doc = new (window as any).RTFJS.Document(rtf);
-        const rendered = await doc.render();
-
-        const container = document.createElement('div');
-        rendered.forEach((node: Node) => container.appendChild(node));
-
-        const clean = sanitizeHtml(container.innerHTML);
-
-        document.execCommand('insertHTML', false, clean);
-      } catch (err) {
-        // fallback plain text
-        const fallback = text
-          .replace(/\n/g, '<br>')
-          .replace(/  /g, '&nbsp;&nbsp;');
-
-        document.execCommand('insertHTML', false, fallback);
-      }
-    }
-
-    // 3. Plain text
-    else {
+    } else {
       const clean = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
         .replace(/\n/g, '<br>')
         .replace(/  /g, '&nbsp;&nbsp;');
 
@@ -1281,7 +1250,6 @@ const handlePaste = useCallback(
 
     requestAnimationFrame(() => {
       if (!editorRef.current) return;
-
       const current = editorRef.current.innerHTML;
       internalHtmlRef.current = current;
       setIsEmpty(!editorRef.current.textContent?.trim());
