@@ -1227,16 +1227,50 @@ const RichTextEditor = ({
 
 const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
-    // Allow native paste first
+    e.preventDefault();
+
+    const clipboard = e.clipboardData;
+
+    let html = clipboard.getData('text/html');
+    let text = clipboard.getData('text/plain');
+    let rtf = clipboard.getData('text/rtf');
+
+    // If HTML available
+    if (html) {
+      html = sanitizeHtml(html);
+      document.execCommand('insertHTML', false, html);
+    }
+
+    // If RTF only (desktop apps)
+    else if (rtf) {
+      const converted = rtf
+        .replace(/\\par[d]?/g, '<br>')
+        .replace(/\\b /g, '<b>')
+        .replace(/\\b0/g, '</b>')
+        .replace(/\\i /g, '<i>')
+        .replace(/\\i0/g, '</i>')
+        .replace(/\\ul /g, '<u>')
+        .replace(/\\ulnone/g, '</u>')
+        .replace(/[{}\\][a-z0-9]+ ?/gi, '');
+
+      document.execCommand(
+        'insertHTML',
+        false,
+        sanitizeHtml(converted)
+      );
+    }
+
+    // Plain text fallback
+    else {
+      const escaped = text
+        .replace(/\n/g, '<br>')
+        .replace(/  /g, '&nbsp;&nbsp;');
+
+      document.execCommand('insertHTML', false, escaped);
+    }
+
     requestAnimationFrame(() => {
       if (!editorRef.current) return;
-
-      let html = editorRef.current.innerHTML;
-
-      // Clean pasted content but preserve rich formatting
-      html = sanitizeHtml(html);
-
-      editorRef.current.innerHTML = html;
 
       const current = editorRef.current.innerHTML;
 
