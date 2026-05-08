@@ -1227,70 +1227,21 @@ const RichTextEditor = ({
 
 const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
+    setTimeout(() => {
+      if (!editorRef.current) return;
 
-    const clipboardData = e.clipboardData;
+      let html = editorRef.current.innerHTML;
 
-    // ✅ Try HTML first (works in normal browsers)
-    let html = clipboardData.getData("text/html");
+      html = sanitizeHtml(html);
 
-    // ✅ Fallback for VDI: only plain text available
-    if (!html) {
-      const text = clipboardData.getData("text/plain");
+      editorRef.current.innerHTML = html;
 
-      // 👇 Convert plain text → basic HTML
-      html = text
-        .replace(/\n/g, "<br>")
-        .replace(/\t/g, "&nbsp;&nbsp;&nbsp;&nbsp;");
-    }
-    
-let html = clipboardData.getData("text/html");
-
-if (!html) {
-  const rtf = clipboardData.getData("text/rtf");
-
-  if (rtf) {
-    // basic RTF cleanup fallback
-    html = rtf
-      .replace(/\\par/g, "<br>")
-      .replace(/\\b (.*?)\\b0/g, "<b>$1</b>")
-      .replace(/\\i (.*?)\\i0/g, "<i>$1</i>");
-  }
-}
-
-    // ✅ Sanitize your HTML (reuse existing function)
-    html = sanitizeHtml(html);
-
-    // ✅ Insert at cursor position (IMPORTANT — do NOT replace whole editor)
-    const selection = window.getSelection();
-    if (!selection || !selection.rangeCount) return;
-
-    const range = selection.getRangeAt(0);
-    range.deleteContents();
-
-    const temp = document.createElement("div");
-    temp.innerHTML = html;
-
-    const frag = document.createDocumentFragment();
-    let node;
-    while ((node = temp.firstChild)) {
-      frag.appendChild(node);
-    }
-
-    range.insertNode(frag);
-
-    // Move cursor to end
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // ✅ Update state
-    if (editorRef.current) {
       const current = editorRef.current.innerHTML;
       internalHtmlRef.current = current;
+
       setIsEmpty(!editorRef.current.textContent?.trim());
       onHtmlChange(current);
-    }
+    }, 30);
   },
   [onHtmlChange]
 );
