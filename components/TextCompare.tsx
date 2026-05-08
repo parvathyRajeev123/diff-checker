@@ -1273,7 +1273,7 @@ const RichTextEditor = ({
     }
   };
 
-const handlePaste = useCallback(
+/*const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
     // DO NOT prevent default
     // Let desktop app/browser decode clipboard naturally
@@ -1314,24 +1314,38 @@ const handlePaste = useCallback(
   return (
     <div className="relative">
       <div
-        ref={editorRef}
-        contentEditable
-        suppressContentEditableWarning
-        spellCheck={false}
-        className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-        onInput={handleInput}
-        onPaste={handlePaste}
-        onKeyDown={handleKeyDown}
-      />
+  ref={editorRef}
+  contentEditable
+  suppressContentEditableWarning
+  spellCheck={false}
+  className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+  onInput={handleInput}
+  onKeyDown={handleKeyDown}
+  onPaste={() => {
+    setTimeout(() => {
+      if (!editorRef.current) return;
 
-      {isEmpty && (
-        <div className="pointer-events-none absolute top-3 left-3 text-sm text-gray-400">
-          {placeholder}
-        </div>
-      )}
-    </div>
-  );
-};
+      let html = editorRef.current.innerHTML;
+
+      html = html
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<meta[^>]*>/gi, '')
+        .replace(/<link[^>]*>/gi, '')
+        .replace(/<\/?span[^>]*>/gi, '')
+        .replace(/<\/?font[^>]*>/gi, '')
+        .replace(/class="[^"]*"/gi, '')
+        .replace(/style="[^"]*"/gi, '');
+
+      editorRef.current.innerHTML = html;
+
+      internalHtmlRef.current = html;
+
+      setIsEmpty(!editorRef.current.textContent?.trim());
+
+      onHtmlChange(html);
+    }, 0);
+  }}
+/>*/
 
 const TextCompare = () => {
   const [leftHtml, setLeftHtml] = useState('');
