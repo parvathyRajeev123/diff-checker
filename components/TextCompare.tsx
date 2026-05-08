@@ -1227,21 +1227,76 @@ const RichTextEditor = ({
 
 const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
-    setTimeout(() => {
-      if (!editorRef.current) return;
+    e.preventDefault();
 
-      let html = editorRef.current.innerHTML;
+    const clipboard = e.clipboardData;
 
-      html = sanitizeHtml(html);
+    const htmlData = clipboard.getData("text/html");
+    const rtfData = clipboard.getData("text/rtf");
+    const textData = clipboard.getData("text/plain");
 
-      editorRef.current.innerHTML = html;
+    const isVDIPlainOnly = !htmlData && !rtfData && textData;
 
+    let html = htmlData;
+
+    // ✅ Try RTF (fallback)
+    if (!html && rtfData) {
+      html = rtfData
+        .replace(/\\par/g, "<br>")
+        .replace(/\\b (.*?)\\b0/g, "<b>$1</b>")
+        .replace(/\\i (.*?)\\i0/g, "<i>$1</i>");
+    }
+
+    // ✅ Plain text fallback (VDI case)
+    if (!html && textData) {
+      const enhancePlainText = (text: string) => {
+        return text
+          .replace(/^\s*•\s+(.*)$/gm, "<li>$1</li>")
+          .replace(/^\s*\d+\.\s+(.*)$/gm, "<li>$1</li>")
+          .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+          .replace(/\*(.*?)\*/g, "<i>$1</i>");
+      };
+
+      html = enhancePlainText(textData).replace(/\n/g, "<br>");
+    }
+
+    // ✅ Warning (optional but useful)
+    if (isVDIPlainOnly) {
+      console.warn("VDI limitation: Only plain text available from clipboard");
+    }
+
+    // ✅ Sanitize using your existing function
+    html = sanitizeHtml(html);
+
+    // ✅ Insert at cursor
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+
+    const temp = document.createElement("div");
+    temp.innerHTML = html;
+
+    const frag = document.createDocumentFragment();
+    let node;
+    while ((node = temp.firstChild)) {
+      frag.appendChild(node);
+    }
+
+    range.insertNode(frag);
+
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    // ✅ Update state
+    if (editorRef.current) {
       const current = editorRef.current.innerHTML;
       internalHtmlRef.current = current;
-
       setIsEmpty(!editorRef.current.textContent?.trim());
       onHtmlChange(current);
-    }, 30);
+    }
   },
   [onHtmlChange]
 );
