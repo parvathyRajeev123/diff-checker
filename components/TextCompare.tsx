@@ -81,9 +81,8 @@ const sanitizeHtml = (html: string): string => {
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
 
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(stripped, 'text/html');
-  const tmp = doc.body;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = stripped;
 
   const cleanNode = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -121,10 +120,10 @@ const sanitizeHtml = (html: string): string => {
   }
   result = result
     .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[  ]{2,}/g, (match) => {
+    .replace(/[ \u00A0]{2,}/g, (match) => {
       let out = '';
       for (let i = 0; i < match.length; i++) {
-        out += i % 2 === 0 ? ' ' : ' ';
+        out += i % 2 === 0 ? '\u00A0' : ' ';
       }
       return out;
     })
@@ -336,7 +335,7 @@ const computeWordDiff = (
   const newTokens = tokenizeHtmlLine(newLine.html);
 
   // Helper to check if a string is whitespace-only (including non-breaking spaces)
-  const isWsOnly = (s: string): boolean => /^[\s ]+$/.test(s);
+  const isWsOnly = (s: string): boolean => /^[\s\u00A0]+$/.test(s);
 
   // Normalize whitespace tokens to single space for LCS alignment
   // This prevents identical whitespace tokens from being unmatched due to LCS path ambiguity
@@ -591,7 +590,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   const leftNonEmptyLines = leftLines.filter((l) => l.text.length > 0);
   const rightNonEmptyLines = rightLines.filter((l) => l.text.length > 0);
   const normalizeWsGlobal = (s: string): string =>
-    s.replace(/[\s ]+/g, ' ').trim();
+    s.replace(/[\s\u00A0]+/g, ' ').trim();
   const leftFullText = normalizeWsGlobal(
     leftNonEmptyLines.map((l) => l.text).join(' ')
   );
@@ -613,7 +612,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   // ── Shared helpers for marker-based line-break handling ──
   // These are used by both the pre-check (same text, different breaks)
   // and emitChunk (misaligned lines with text + break changes).
-  const LINE_BREAK_MARKER = '↵'; // ↵
+  const LINE_BREAK_MARKER = '\u21B5'; // ↵
   const markerRe = new RegExp(LINE_BREAK_MARKER, 'g');
 
   const joinWithMarkers = (lines: HtmlLine[]): HtmlLine => {
@@ -732,7 +731,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
 
       // Normalize whitespace to detect line break changes even when spacing differs
       const normalizeWs = (s: string): string =>
-        s.replace(/[\s ]+/g, ' ').trim();
+        s.replace(/[\s\u00A0]+/g, ' ').trim();
       const isLineBreakChange =
         !linesMatch &&
         normalizeWs(leftJoinedText) === normalizeWs(rightJoinedText);
@@ -753,7 +752,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
           (s) =>
             s.changeType !== undefined &&
             s.changeType !== 'spacing_change' &&
-            !/^[\s ]+$/.test(s.text)
+            !/^[\s\u00A0]+$/.test(s.text)
         );
 
         if (hasWordChanges) {
@@ -1155,7 +1154,7 @@ const getSegmentHighlightClass = (
     case 'strikethrough_change':
       return `bg-pink-200 ${base}`;
     case 'spacing_change':
-      return `bg-orange-400 text-black ${base}`;
+  return `bg-orange-400 text-black ${base}`;
     case 'line_break_change':
       return `bg-emerald-200 ${base}`;
     case 'other_formatting_change':
@@ -1201,19 +1200,15 @@ const RichTextEditor = ({
 
   React.useEffect(() => {
     if (!editorRef.current) return;
-
     if (!initializedRef.current) {
       initializedRef.current = true;
-
       if (html) {
         editorRef.current.innerHTML = html;
         internalHtmlRef.current = html;
         setIsEmpty(false);
       }
-
       return;
     }
-
     if (html !== internalHtmlRef.current) {
       internalHtmlRef.current = html;
       editorRef.current.innerHTML = html;
@@ -1222,130 +1217,82 @@ const RichTextEditor = ({
   }, [html]);
 
   const handleInput = useCallback(() => {
-    if (!editorRef.current) return;
-
-    const current = editorRef.current.innerHTML;
-
-    internalHtmlRef.current = current;
-
-    setIsEmpty(!editorRef.current.textContent?.trim());
-
-    onHtmlChange(current);
+    if (editorRef.current) {
+      const current = editorRef.current.innerHTML;
+      internalHtmlRef.current = current;
+      setIsEmpty(!editorRef.current.textContent?.trim());
+      onHtmlChange(current);
+    }
   }, [onHtmlChange]);
 
-  const insertHtmlAtCursor = (html: string) => {
-    const selection = window.getSelection();
-
-    if (!selection || selection.rangeCount === 0) {
-      if (editorRef.current) {
-        editorRef.current.innerHTML += html;
-      }
-      return;
-    }
-
-    const range = selection.getRangeAt(0);
-
-    range.deleteContents();
-
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
-
-    const fragment = document.createDocumentFragment();
-
-    let node: ChildNode | null;
-
-    while ((node = temp.firstChild)) {
-      fragment.appendChild(node);
-    }
-
-    const lastNode = fragment.lastChild;
-
-    range.insertNode(fragment);
-
-    if (lastNode) {
-      const newRange = document.createRange();
-
-      newRange.setStartAfter(lastNode);
-      newRange.collapse(true);
-
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-    }
-  };
-
   const handlePaste = useCallback(
-  (e: React.ClipboardEvent<HTMLDivElement>) => {
-    // DO NOT prevent default
-    // Let desktop app/browser decode clipboard naturally
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      e.preventDefault();
 
-    requestAnimationFrame(() => {
-      if (!editorRef.current) return;
+      const clipboardHtml = e.clipboardData.getData('text/html');
+      const clipboardText = e.clipboardData.getData('text/plain');
 
-      // Get browser-decoded HTML
-      let currentHtml = editorRef.current.innerHTML;
+      let cleanedHtml: string;
+      const plainTextToHtml = (text: string) =>
+        text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>');
 
-      // Sanitize AFTER native paste
-      currentHtml = sanitizeHtml(currentHtml);
+      if (clipboardHtml) {
+        cleanedHtml = sanitizeHtml(clipboardHtml);
+        // If sanitized HTML lost line breaks that exist in the plain text,
+        // fall back to plain text so blank lines are preserved — BUT only
+        // when the sanitized HTML has no formatting tags.  Falling back to
+        // plain text when formatting (bold/italic/underline) is present
+        // would discard the formatting the user pasted from Word, etc.
+        const hasFormattingTags = /<(b|strong|i|em|u|s|strike|sub|sup)\b/i.test(
+          cleanedHtml
+        );
+        if (!hasFormattingTags) {
+          const htmlBreaks = (cleanedHtml.match(/<br\s*\/?>/gi) || []).length;
+          const textBreaks = clipboardText
+            ? (clipboardText.match(/\n/g) || []).length
+            : 0;
+          if (textBreaks > 0 && htmlBreaks < textBreaks) {
+            cleanedHtml = plainTextToHtml(clipboardText);
+          }
+        }
+      } else {
+        cleanedHtml = plainTextToHtml(clipboardText);
+      }
 
-      // Re-apply sanitized HTML
-      editorRef.current.innerHTML = currentHtml;
+      document.execCommand('insertHTML', false, cleanedHtml);
 
-      internalHtmlRef.current = currentHtml;
-
-      setIsEmpty(!editorRef.current.textContent?.trim());
-
-      onHtmlChange(currentHtml);
-    });
-  },
-  [onHtmlChange]
-);
-  
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-
-        insertHtmlAtCursor('<br>');
+      if (editorRef.current) {
+        const current = editorRef.current.innerHTML;
+        internalHtmlRef.current = current;
+        setIsEmpty(!editorRef.current.textContent?.trim());
+        onHtmlChange(current);
       }
     },
-    []
+    [onHtmlChange]
   );
 
   return (
     <div className="relative">
       <div
-  ref={editorRef}
-  contentEditable
-  suppressContentEditableWarning
-  spellCheck={false}
-  className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-  onInput={handleInput}
-  onKeyDown={handleKeyDown}
-  onPaste={() => {
-    setTimeout(() => {
-      if (!editorRef.current) return;
-
-      let html = editorRef.current.innerHTML;
-
-      html = html
-        .replace(/<!--[\s\S]*?-->/g, '')
-        .replace(/<meta[^>]*>/gi, '')
-        .replace(/<link[^>]*>/gi, '')
-        .replace(/<\/?span[^>]*>/gi, '')
-        .replace(/<\/?font[^>]*>/gi, '')
-        .replace(/class="[^"]*"/gi, '')
-        .replace(/style="[^"]*"/gi, '');
-
-      editorRef.current.innerHTML = html;
-
-      internalHtmlRef.current = html;
-
-      setIsEmpty(!editorRef.current.textContent?.trim());
-
-      onHtmlChange(html);
-    }, 0);
-  }}
-/>
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+        onInput={handleInput}
+        onPaste={handlePaste}
+      />
+      {isEmpty && (
+        <div className="pointer-events-none absolute top-3 left-3 text-sm text-gray-400">
+          {placeholder}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const TextCompare = () => {
   const [leftHtml, setLeftHtml] = useState('');
@@ -1374,47 +1321,50 @@ const TextCompare = () => {
   const [isEditing, setIsEditing] = useState(true);
   const [isIdentical, setIsIdentical] = useState(false);
   const saveHistory = (left: string, right: string) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push({ left, right });
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  };
+  const newHistory = history.slice(0, historyIndex + 1);
+
+  newHistory.push({ left, right });
+
+  setHistory(newHistory);
+  setHistoryIndex(newHistory.length - 1);
+};
+  
 
   const btnPrimary =
-    'rounded-md bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700';
+"rounded-md bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700";
 
-  const btnDanger =
-    'rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700';
+const btnDanger =
+  "rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700";
 
-  const btnSecondary =
-    'rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700';
+const btnSecondary =
+  "rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700";
 
   const handleCompare = useCallback(() => {
-    const result = computeDiff(leftHtml, rightHtml);
+  const result = computeDiff(leftHtml, rightHtml);
 
-    setDiffResult(result);
-    setIsEditing(false);
+  setDiffResult(result);
+  setIsEditing(false);
 
-    const identical =
-      result.left.every((l) => l.type === 'unchanged') &&
-      result.right.every((l) => l.type === 'unchanged');
+  const identical =
+    result.left.every((l) => l.type === "unchanged") &&
+    result.right.every((l) => l.type === "unchanged");
 
-    setIsIdentical(identical);
-  }, [leftHtml, rightHtml]);
+  setIsIdentical(identical);
+}, [leftHtml, rightHtml]);
 
   const handleClearAll = useCallback(() => {
-    setLeftHtml('');
-    setRightHtml('');
-    setDiffResult(null);
-    setIsEditing(true);
-    setIsIdentical(false);
-  }, []);
+  setLeftHtml("");
+  setRightHtml("");
+  setDiffResult(null);
+  setIsEditing(true);
+  setIsIdentical(false);
+}, []);
 
   const handleEditTexts = useCallback(() => {
-    setIsEditing(true);
-    setDiffResult(null);
-    setIsIdentical(false);
-  }, []);
+  setIsEditing(true);
+  setDiffResult(null);
+  setIsIdentical(false);
+}, []);
 
   const handleSwitchTexts = useCallback(() => {
     const tmpLeft = leftHtml;
@@ -1424,16 +1374,14 @@ const TextCompare = () => {
   }, [leftHtml, rightHtml]);
 
   const handleLeftHtmlChange = useCallback((newHtml: string) => {
-    setLeftHtml(newHtml);
-    saveHistory(newHtml, rightHtml);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rightHtml, history, historyIndex]);
+  setLeftHtml(newHtml);
+  saveHistory(newHtml, rightHtml);
+}, [rightHtml, history, historyIndex]);
 
   const handleRightHtmlChange = useCallback((newHtml: string) => {
-    setRightHtml(newHtml);
-    saveHistory(leftHtml, newHtml);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leftHtml, history, historyIndex]);
+  setRightHtml(newHtml);
+  saveHistory(leftHtml, newHtml);
+}, [leftHtml, history, historyIndex]);
 
   const renderDiffPanel = (lines: DiffLine[], side: 'left' | 'right') => {
     return (
@@ -1530,41 +1478,46 @@ const TextCompare = () => {
   return (
     <div className="flex flex-col gap-4 p-10">
       {!isEditing && isIdentical && (
-        <div className="flex justify-center">
-          <div className="rounded bg-green-500 px-4 py-1 text-white text-sm font-medium">
-            The two texts are identical!
-          </div>
-        </div>
-      )}
+  <div className="flex justify-center">
+    <div className="rounded bg-green-500 px-4 py-1 text-white text-sm font-medium">
+      The two texts are identical!
+    </div>
+  </div>
+)}
       <div className="grid grid-cols-3 items-center gap-2">
-        {/* LEFT SIDE */}
-        <div className="flex gap-2">
-          {!isEditing && (
-            <Button onPress={handleEditTexts} className={btnSecondary}>
-              Edit texts
-            </Button>
-          )}
-        </div>
-        {/* CENTER */}
-        <div className="flex justify-center">
-          <Button onPress={handleCompare} className={btnPrimary}>
-            Compare
-          </Button>
-        </div>
+
+  {/* LEFT SIDE */}
+  <div className="flex gap-2">
+    {!isEditing && (
+      <Button onPress={handleEditTexts} className={btnSecondary}>
+        Edit texts
+      </Button>
+    )}
+  </div>
+  {/* CENTER */}
+  <div className="flex justify-center">
+    <Button onPress={handleCompare} className={btnPrimary}>
+      Compare
+    </Button>
+  </div>
         {/* RIGHT SIDE */}
-        <div className="flex justify-end items-center gap-3">
-          {renderStats()}
-          <Button onPress={handleUndo} className={btnSecondary}>
-            Undo
-          </Button>
-          <Button onPress={handleRedo} className={btnSecondary}>
-            Redo
-          </Button>
-          <Button onPress={handleClearAll} className={btnDanger}>
-            Clear all
-          </Button>
-        </div>
-      </div>
+  <div className="flex justify-end items-center gap-3">
+    {renderStats()}
+
+    <Button onPress={handleUndo} className={btnSecondary}>
+      Undo
+    </Button>
+
+    <Button onPress={handleRedo} className={btnSecondary}>
+      Redo
+    </Button>
+
+    <Button onPress={handleClearAll} className={btnDanger}>
+      Clear all
+    </Button>
+  </div>
+
+</div>
 
       {isEditing ? (
         <div className="grid grid-cols-2 gap-4">
