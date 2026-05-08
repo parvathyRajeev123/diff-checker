@@ -1225,55 +1225,28 @@ const RichTextEditor = ({
     }
   }, [onHtmlChange]);
 
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLDivElement>) => {
-      e.preventDefault();
+const handlePaste = useCallback(
+  (e: React.ClipboardEvent<HTMLDivElement>) => {
+    // Allow native paste first
+    requestAnimationFrame(() => {
+      if (!editorRef.current) return;
 
-      const clipboardHtml = e.clipboardData.getData('text/html');
-      const clipboardText = e.clipboardData.getData('text/plain');
+      let html = editorRef.current.innerHTML;
 
-      let cleanedHtml: string;
-      const plainTextToHtml = (text: string) =>
-        text
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>');
+      // Clean pasted content but preserve rich formatting
+      html = sanitizeHtml(html);
 
-      if (clipboardHtml) {
-        cleanedHtml = sanitizeHtml(clipboardHtml);
-        // If sanitized HTML lost line breaks that exist in the plain text,
-        // fall back to plain text so blank lines are preserved — BUT only
-        // when the sanitized HTML has no formatting tags.  Falling back to
-        // plain text when formatting (bold/italic/underline) is present
-        // would discard the formatting the user pasted from Word, etc.
-        const hasFormattingTags = /<(b|strong|i|em|u|s|strike|sub|sup)\b/i.test(
-          cleanedHtml
-        );
-        if (!hasFormattingTags) {
-          const htmlBreaks = (cleanedHtml.match(/<br\s*\/?>/gi) || []).length;
-          const textBreaks = clipboardText
-            ? (clipboardText.match(/\n/g) || []).length
-            : 0;
-          if (textBreaks > 0 && htmlBreaks < textBreaks) {
-            cleanedHtml = plainTextToHtml(clipboardText);
-          }
-        }
-      } else {
-        cleanedHtml = plainTextToHtml(clipboardText);
-      }
+      editorRef.current.innerHTML = html;
 
-      document.execCommand('insertHTML', false, cleanedHtml);
+      const current = editorRef.current.innerHTML;
 
-      if (editorRef.current) {
-        const current = editorRef.current.innerHTML;
-        internalHtmlRef.current = current;
-        setIsEmpty(!editorRef.current.textContent?.trim());
-        onHtmlChange(current);
-      }
-    },
-    [onHtmlChange]
-  );
+      internalHtmlRef.current = current;
+      setIsEmpty(!editorRef.current.textContent?.trim());
+      onHtmlChange(current);
+    });
+  },
+  [onHtmlChange]
+);
 
   return (
     <div className="relative">
