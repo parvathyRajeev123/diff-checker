@@ -1273,69 +1273,29 @@ const RichTextEditor = ({
     }
   };
 
- const handlePaste = useCallback(
-  async (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
+const handlePaste = useCallback(
+  (e: React.ClipboardEvent<HTMLDivElement>) => {
+    // DO NOT prevent default
+    // Let desktop app/browser decode clipboard naturally
 
-    let cleanedHtml = '';
+    requestAnimationFrame(() => {
+      if (!editorRef.current) return;
 
-    const plainTextToHtml = (text: string) =>
-      text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/\n/g, '<br>');
+      // Get browser-decoded HTML
+      let currentHtml = editorRef.current.innerHTML;
 
-    try {
-      const clipboardHtml = e.clipboardData.getData('text/html');
-      const clipboardText = e.clipboardData.getData('text/plain');
+      // Sanitize AFTER native paste
+      currentHtml = sanitizeHtml(currentHtml);
 
-      // Some desktop apps store formatted content inside RTF only
-      const clipboardRtf = e.clipboardData.getData('text/rtf');
+      // Re-apply sanitized HTML
+      editorRef.current.innerHTML = currentHtml;
 
-      // PRIORITY 1 → HTML
-      if (clipboardHtml && clipboardHtml.trim()) {
-        cleanedHtml = sanitizeHtml(clipboardHtml);
-      }
+      internalHtmlRef.current = currentHtml;
 
-      // PRIORITY 2 → RTF
-      else if (clipboardRtf && clipboardRtf.trim()) {
-        let rtf = clipboardRtf;
+      setIsEmpty(!editorRef.current.textContent?.trim());
 
-        // basic RTF → HTML conversion
-        rtf = rtf
-          .replace(/\\par[d]?/g, '<br>')
-          .replace(/\\b (.*?)\\b0/g, '<b>$1</b>')
-          .replace(/\\i (.*?)\\i0/g, '<i>$1</i>')
-          .replace(/\\ul (.*?)\\ulnone/g, '<u>$1</u>')
-          .replace(/[{}\\]/g, '');
-
-        cleanedHtml = rtf;
-      }
-
-      // PRIORITY 3 → Plain text
-      else {
-        cleanedHtml = plainTextToHtml(clipboardText);
-      }
-
-      insertHtmlAtCursor(cleanedHtml);
-
-      requestAnimationFrame(() => {
-        if (!editorRef.current) return;
-
-        const current = editorRef.current.innerHTML;
-
-        internalHtmlRef.current = current;
-
-        setIsEmpty(!editorRef.current.textContent?.trim());
-
-        onHtmlChange(current);
-      });
-    } catch (err) {
-      console.error(err);
-    }
+      onHtmlChange(currentHtml);
+    });
   },
   [onHtmlChange]
 );
