@@ -1273,7 +1273,7 @@ const RichTextEditor = ({
     }
   };
 
-/*const handlePaste = useCallback(
+  const handlePaste = useCallback(
   (e: React.ClipboardEvent<HTMLDivElement>) => {
     // DO NOT prevent default
     // Let desktop app/browser decode clipboard naturally
@@ -1298,7 +1298,7 @@ const RichTextEditor = ({
     });
   },
   [onHtmlChange]
-);*/
+);
   
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
