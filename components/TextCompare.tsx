@@ -81,8 +81,9 @@ const sanitizeHtml = (html: string): string => {
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
 
-  const tmp = document.createElement('div');
-  tmp.innerHTML = stripped;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(stripped, 'text/html');
+  const tmp = doc.body;
 
   const cleanNode = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -1200,15 +1201,19 @@ const RichTextEditor = ({
 
   React.useEffect(() => {
     if (!editorRef.current) return;
+
     if (!initializedRef.current) {
       initializedRef.current = true;
+
       if (html) {
         editorRef.current.innerHTML = html;
         internalHtmlRef.current = html;
         setIsEmpty(false);
       }
+
       return;
     }
+
     if (html !== internalHtmlRef.current) {
       internalHtmlRef.current = html;
       editorRef.current.innerHTML = html;
@@ -1217,13 +1222,56 @@ const RichTextEditor = ({
   }, [html]);
 
   const handleInput = useCallback(() => {
-    if (editorRef.current) {
-      const current = editorRef.current.innerHTML;
-      internalHtmlRef.current = current;
-      setIsEmpty(!editorRef.current.textContent?.trim());
-      onHtmlChange(current);
-    }
+    if (!editorRef.current) return;
+
+    const current = editorRef.current.innerHTML;
+
+    internalHtmlRef.current = current;
+
+    setIsEmpty(!editorRef.current.textContent?.trim());
+
+    onHtmlChange(current);
   }, [onHtmlChange]);
+
+  const insertHtmlAtCursor = (html: string) => {
+    const selection = window.getSelection();
+
+    if (!selection || selection.rangeCount === 0) {
+      if (editorRef.current) {
+        editorRef.current.innerHTML += html;
+      }
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+
+    range.deleteContents();
+
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+
+    const fragment = document.createDocumentFragment();
+
+    let node: ChildNode | null;
+
+    while ((node = temp.firstChild)) {
+      fragment.appendChild(node);
+    }
+
+    const lastNode = fragment.lastChild;
+
+    range.insertNode(fragment);
+
+    if (lastNode) {
+      const newRange = document.createRange();
+
+      newRange.setStartAfter(lastNode);
+      newRange.collapse(true);
+
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+    }
+  };
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -1232,30 +1280,31 @@ const RichTextEditor = ({
       const clipboardHtml = e.clipboardData.getData('text/html');
       const clipboardText = e.clipboardData.getData('text/plain');
 
-      let cleanedHtml: string;
       const plainTextToHtml = (text: string) =>
         text
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
           .replace(/\n/g, '<br>');
 
-      if (clipboardHtml) {
+      let cleanedHtml = '';
+
+      if (clipboardHtml && clipboardHtml.trim()) {
         cleanedHtml = sanitizeHtml(clipboardHtml);
-        // If sanitized HTML lost line breaks that exist in the plain text,
-        // fall back to plain text so blank lines are preserved — BUT only
-        // when the sanitized HTML has no formatting tags.  Falling back to
-        // plain text when formatting (bold/italic/underline) is present
-        // would discard the formatting the user pasted from Word, etc.
-        const hasFormattingTags = /<(b|strong|i|em|u|s|strike|sub|sup)\b/i.test(
-          cleanedHtml
-        );
-        if (!hasFormattingTags) {
-          const htmlBreaks = (cleanedHtml.match(/<br\s*\/?>/gi) || []).length;
-          const textBreaks = clipboardText
-            ? (clipboardText.match(/\n/g) || []).length
-            : 0;
-          if (textBreaks > 0 && htmlBreaks < textBreaks) {
+
+        const hasFormatting =
+          /<(b|strong|i|em|u|s|strike|sub|sup)\b/i.test(cleanedHtml);
+
+        if (!hasFormatting && clipboardText) {
+          const htmlBreaks =
+            (cleanedHtml.match(/<br\s*\/?>/gi) || []).length;
+
+          const textBreaks =
+            (clipboardText.match(/\n/g) || []).length;
+
+          if (textBreaks > htmlBreaks) {
             cleanedHtml = plainTextToHtml(clipboardText);
           }
         }
@@ -1263,16 +1312,32 @@ const RichTextEditor = ({
         cleanedHtml = plainTextToHtml(clipboardText);
       }
 
-      document.execCommand('insertHTML', false, cleanedHtml);
+      insertHtmlAtCursor(cleanedHtml);
 
-      if (editorRef.current) {
+      requestAnimationFrame(() => {
+        if (!editorRef.current) return;
+
         const current = editorRef.current.innerHTML;
+
         internalHtmlRef.current = current;
+
         setIsEmpty(!editorRef.current.textContent?.trim());
+
         onHtmlChange(current);
-      }
+      });
     },
     [onHtmlChange]
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+
+        insertHtmlAtCursor('<br>');
+      }
+    },
+    []
   );
 
   return (
@@ -1281,10 +1346,13 @@ const RichTextEditor = ({
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
+        spellCheck={false}
         className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
         onInput={handleInput}
         onPaste={handlePaste}
+        onKeyDown={handleKeyDown}
       />
+
       {isEmpty && (
         <div className="pointer-events-none absolute top-3 left-3 text-sm text-gray-400">
           {placeholder}
