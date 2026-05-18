@@ -75,6 +75,29 @@ const SKIP_TAGS = new Set([
 ]);
 
 const sanitizeHtml = (html: string): string => {
+  // Extract class-based CSS rules before stripping (Excel uses <style> blocks)
+  const classStyles: Record<string, Record<string, string>> = {};
+  const styleBlockRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let sbMatch: RegExpExecArray | null;
+  while ((sbMatch = styleBlockRe.exec(html)) !== null) {
+    const css = sbMatch[1].replace(/<!--/g, '').replace(/-->/g, '');
+    const ruleRe = /\.([a-zA-Z_][\w]*)\s*\{([^}]*)\}/g;
+    let rMatch: RegExpExecArray | null;
+    while ((rMatch = ruleRe.exec(css)) !== null) {
+      const cls = rMatch[1];
+      const props: Record<string, string> = {};
+      rMatch[2].split(';').forEach((decl) => {
+        const idx = decl.indexOf(':');
+        if (idx > 0) {
+          const prop = decl.substring(0, idx).trim();
+          const val = decl.substring(idx + 1).trim();
+          if (prop && val) props[prop] = val;
+        }
+      });
+      classStyles[cls] = { ...classStyles[cls], ...props };
+    }
+  }
+
   const stripped = html
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -83,6 +106,21 @@ const sanitizeHtml = (html: string): string => {
 
   const tmp = document.createElement('div');
   tmp.innerHTML = stripped;
+
+  // Apply extracted class styles as inline styles so cleanNode can detect them
+  if (Object.keys(classStyles).length > 0) {
+    tmp.querySelectorAll('*').forEach((el) => {
+      const htmlEl = el as HTMLElement;
+      htmlEl.classList.forEach((cls) => {
+        const rules = classStyles[cls];
+        if (rules) {
+          Object.entries(rules).forEach(([prop, val]) => {
+            htmlEl.style.setProperty(prop, val);
+          });
+        }
+      });
+    });
+  }
 
   const cleanNode = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -111,7 +149,23 @@ const sanitizeHtml = (html: string): string => {
     if (tag === 'p' || tag === 'div') {
       return '\x01' + childHtml;
     }
-    return childHtml;
+
+    // Convert inline styles (from Sticky Notes, Excel, etc.) to HTML tags
+    const style = el.style;
+    let wrapped = childHtml;
+    if (style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 700) {
+      wrapped = `<b>${wrapped}</b>`;
+    }
+    if (style.fontStyle === 'italic') {
+      wrapped = `<i>${wrapped}</i>`;
+    }
+    if (style.textDecoration?.includes('underline') || style.textDecorationLine?.includes('underline')) {
+      wrapped = `<u>${wrapped}</u>`;
+    }
+    if (style.textDecoration?.includes('line-through') || style.textDecorationLine?.includes('line-through')) {
+      wrapped = `<s>${wrapped}</s>`;
+    }
+    return wrapped;
   };
 
   let result = '';
@@ -1227,10 +1281,25 @@ const RichTextEditor = ({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      e.preventDefault();
-
       const clipboardHtml = e.clipboardData.getData('text/html');
       const clipboardText = e.clipboardData.getData('text/plain');
+
+      // VDI tools may not expose data via clipboardData (e.g. RTF-only).
+      // In that case, let the browser handle the paste natively, then sanitize.
+      if (!clipboardHtml && !clipboardText) {
+        setTimeout(() => {
+          if (!editorRef.current) return;
+          const rawHtml = editorRef.current.innerHTML;
+          const cleaned = sanitizeHtml(rawHtml);
+          editorRef.current.innerHTML = cleaned;
+          internalHtmlRef.current = cleaned;
+          setIsEmpty(!editorRef.current.textContent?.trim());
+          onHtmlChange(cleaned);
+        }, 0);
+        return;
+      }
+
+      e.preventDefault();
 
       let cleanedHtml: string;
       const plainTextToHtml = (text: string) =>
@@ -1242,6 +1311,10 @@ const RichTextEditor = ({
 
       if (clipboardHtml) {
         cleanedHtml = sanitizeHtml(clipboardHtml);
+        // If sanitized HTML is empty but we have plain text, fall back
+        if (!cleanedHtml.trim() && clipboardText) {
+          cleanedHtml = plainTextToHtml(clipboardText);
+        }
         // If sanitized HTML lost line breaks that exist in the plain text,
         // fall back to plain text so blank lines are preserved — BUT only
         // when the sanitized HTML has no formatting tags.  Falling back to
@@ -1260,17 +1333,28 @@ const RichTextEditor = ({
           }
         }
       } else {
-        cleanedHtml = plainTextToHtml(clipboardText);
+        cleanedHtml = plainTextToHtml(clipboardText || '');
       }
 
-      document.execCommand('insertHTML', false, cleanedHtml);
+      if (!editorRef.current) return;
 
-      if (editorRef.current) {
-        const current = editorRef.current.innerHTML;
-        internalHtmlRef.current = current;
-        setIsEmpty(!editorRef.current.textContent?.trim());
-        onHtmlChange(current);
+      // Direct innerHTML set — simple and reliable
+      const editorIsEmpty = !editorRef.current.textContent?.trim();
+      if (editorIsEmpty) {
+        editorRef.current.innerHTML = cleanedHtml;
+      } else {
+        // Editor has existing content — try to insert at cursor
+        editorRef.current.focus();
+        const didInsert = document.execCommand('insertHTML', false, cleanedHtml);
+        if (!didInsert) {
+          editorRef.current.innerHTML += cleanedHtml;
+        }
       }
+
+      const current = editorRef.current.innerHTML;
+      internalHtmlRef.current = current;
+      setIsEmpty(!editorRef.current.textContent?.trim());
+      onHtmlChange(current);
     },
     [onHtmlChange]
   );
@@ -1558,7 +1642,7 @@ const btnSecondary =
               {renderDiffPanel(diffResult.right, 'right')}
             </div>
           </div>
-          {renderChangeLegend()}
+          {renderChangeLegend()} 
         </>
       ) : null}
     </div>
