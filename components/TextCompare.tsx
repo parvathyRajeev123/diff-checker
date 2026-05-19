@@ -74,6 +74,194 @@ const SKIP_TAGS = new Set([
   'o:p',
 ]);
 
+const rtfToHtml = (rtf: string): string => {
+  interface FmtState {
+    bold: boolean;
+    italic: boolean;
+    underline: boolean;
+    strike: boolean;
+  }
+  const defaultFmt = (): FmtState => ({
+    bold: false,
+    italic: false,
+    underline: false,
+    strike: false,
+  });
+
+  const segments: { text: string; fmt: FmtState }[] = [];
+  let cur = '';
+  let fmt = defaultFmt();
+  const stack: FmtState[] = [];
+  let i = 0;
+  let skipGroup = false;
+  let skipDepth = 0;
+  let depth = 0;
+
+  const flush = () => {
+    if (cur) {
+      segments.push({ text: cur, fmt: { ...fmt } });
+      cur = '';
+    }
+  };
+
+  while (i < rtf.length) {
+    const ch = rtf[i];
+
+    if (ch === '{') {
+      depth++;
+      stack.push({ ...fmt });
+      const ahead = rtf.substring(i + 1, i + 20);
+      if (
+        !skipGroup &&
+        /^\\(fonttbl|colortbl|stylesheet|info|pict|header|footer)\b/.test(ahead)
+      ) {
+        skipGroup = true;
+        skipDepth = depth;
+      }
+      i++;
+      continue;
+    }
+
+    if (ch === '}') {
+      if (skipGroup && depth === skipDepth) {
+        skipGroup = false;
+      }
+      flush();
+      if (stack.length > 0) {
+        fmt = stack.pop()!;
+      }
+      depth--;
+      i++;
+      continue;
+    }
+
+    if (skipGroup) {
+      i++;
+      continue;
+    }
+
+    if (ch === '\\') {
+      i++;
+      if (i >= rtf.length) break;
+
+      if (rtf[i] === '~') {
+        cur += '\u00A0';
+        i++;
+        continue;
+      }
+      if (rtf[i] === '\n' || rtf[i] === '\r') {
+        i++;
+        continue;
+      }
+      if (rtf[i] === '{' || rtf[i] === '}' || rtf[i] === '\\') {
+        cur += rtf[i];
+        i++;
+        continue;
+      }
+      if (rtf[i] === "'") {
+        const hex = rtf.substring(i + 1, i + 3);
+        const code = parseInt(hex, 16);
+        if (!isNaN(code)) cur += String.fromCharCode(code);
+        i += 3;
+        continue;
+      }
+
+      let word = '';
+      while (i < rtf.length && /[a-zA-Z]/.test(rtf[i])) {
+        word += rtf[i];
+        i++;
+      }
+
+      let param = '';
+      if (i < rtf.length && (rtf[i] === '-' || /[0-9]/.test(rtf[i]))) {
+        if (rtf[i] === '-') {
+          param += '-';
+          i++;
+        }
+        while (i < rtf.length && /[0-9]/.test(rtf[i])) {
+          param += rtf[i];
+          i++;
+        }
+      }
+
+      if (i < rtf.length && rtf[i] === ' ') {
+        i++;
+      }
+
+      const pNum = param ? parseInt(param) : null;
+
+      flush();
+      switch (word) {
+        case 'b':
+          fmt.bold = pNum !== 0;
+          break;
+        case 'i':
+          fmt.italic = pNum !== 0;
+          break;
+        case 'ul':
+          fmt.underline = pNum !== 0;
+          break;
+        case 'ulnone':
+          fmt.underline = false;
+          break;
+        case 'strike':
+          fmt.strike = pNum !== 0;
+          break;
+        case 'par':
+        case 'line':
+          cur += '\n';
+          break;
+      }
+      continue;
+    }
+
+    if (ch === '\n' || ch === '\r') {
+      i++;
+      continue;
+    }
+
+    cur += ch;
+    i++;
+  }
+
+  flush();
+
+  const merged: typeof segments = [];
+  for (const seg of segments) {
+    const last = merged[merged.length - 1];
+    if (
+      last &&
+      last.fmt.bold === seg.fmt.bold &&
+      last.fmt.italic === seg.fmt.italic &&
+      last.fmt.underline === seg.fmt.underline &&
+      last.fmt.strike === seg.fmt.strike
+    ) {
+      last.text += seg.text;
+    } else {
+      merged.push({ text: seg.text, fmt: { ...seg.fmt } });
+    }
+  }
+
+  let html = '';
+  for (const seg of merged) {
+    if (!seg.text) continue;
+    let t = seg.text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>');
+
+    if (seg.fmt.bold) t = `<b>${t}</b>`;
+    if (seg.fmt.italic) t = `<i>${t}</i>`;
+    if (seg.fmt.underline) t = `<u>${t}</u>`;
+    if (seg.fmt.strike) t = `<s>${t}</s>`;
+
+    html += t;
+  }
+
+  return html.trim();
+};
+
 const sanitizeHtml = (html: string): string => {
   // Extract class-based CSS rules before stripping (Excel uses <style> blocks)
   const classStyles: Record<string, Record<string, string>> = {};
@@ -1284,22 +1472,59 @@ const RichTextEditor = ({
       const clipboardHtml = e.clipboardData.getData('text/html');
       const clipboardText = e.clipboardData.getData('text/plain');
 
-      // VDI tools may not expose data via clipboardData (e.g. RTF-only).
-      // In that case, let the browser handle the paste natively, then sanitize.
-      if (!clipboardHtml && !clipboardText) {
+      // DEBUG: Log clipboard contents to diagnose paste issues
+      console.log('[PASTE DEBUG] types:', Array.from(e.clipboardData.types));
+      console.log('[PASTE DEBUG] html:', clipboardHtml ? clipboardHtml.substring(0, 500) : '(empty)');
+      console.log('[PASTE DEBUG] text:', clipboardText ? clipboardText.substring(0, 200) : '(empty)');
+      const clipboardRtf = e.clipboardData.getData('text/rtf');
+      console.log('[PASTE DEBUG] rtf:', clipboardRtf ? clipboardRtf.substring(0, 1000) : '(empty)');
+
+
+      // When clipboard has RTF but no HTML (VDI tools), parse RTF ourselves
+      // since Chrome ignores RTF formatting on native paste.
+      if (!clipboardHtml && clipboardRtf) {
+        e.preventDefault();
+        const rtfHtml = rtfToHtml(clipboardRtf);
+        console.log('[PASTE DEBUG] rtfToHtml result:', rtfHtml.substring(0, 500));
+        if (editorRef.current) {
+          const editorIsEmpty = !editorRef.current.textContent?.trim();
+          if (editorIsEmpty) {
+            editorRef.current.innerHTML = rtfHtml;
+          } else {
+            editorRef.current.focus();
+            const didInsert = document.execCommand('insertHTML', false, rtfHtml);
+            if (!didInsert) {
+              editorRef.current.innerHTML += rtfHtml;
+            }
+          }
+          const current = editorRef.current.innerHTML;
+          internalHtmlRef.current = current;
+          setIsEmpty(!editorRef.current.textContent?.trim());
+          onHtmlChange(current);
+        }
+        return;
+      }
+
+
+      // No HTML and no RTF (pure plain text or VDI without RTF) —
+      // let the browser handle the paste natively, then sanitize.
+      if (!clipboardHtml) {
         setTimeout(() => {
           if (!editorRef.current) return;
           const rawHtml = editorRef.current.innerHTML;
           const cleaned = sanitizeHtml(rawHtml);
+          console.log('[PASTE DEBUG] after sanitize:', cleaned.substring(0, 500));
           editorRef.current.innerHTML = cleaned;
           internalHtmlRef.current = cleaned;
           setIsEmpty(!editorRef.current.textContent?.trim());
           onHtmlChange(cleaned);
-        }, 0);
+        }, 50);
         return;
       }
 
+
       e.preventDefault();
+
 
       let cleanedHtml: string;
       const plainTextToHtml = (text: string) =>
