@@ -160,8 +160,18 @@ const rtfToHtml = (rtf: string): string => {
       }
       if (rtf[i] === "'") {
         const hex = rtf.substring(i + 1, i + 3);
-        const code = parseInt(hex, 16);
-        if (!isNaN(code)) cur += String.fromCharCode(code);
+        const byteVal = parseInt(hex, 16);
+        if (!isNaN(byteVal)) {
+          // Windows-1252 bytes 0x80-0x9F differ from Unicode codepoints
+          const W: Record<number, number> = {
+            0x91: 0x2018, 0x92: 0x2019, // ' '
+            0x93: 0x201C, 0x94: 0x201D, // " "
+            0x96: 0x2013, 0x97: 0x2014, // – —
+            0x85: 0x2026, 0x80: 0x20AC, // … €
+            0x82: 0x201A, 0x84: 0x201E, // ‚ „
+          };
+          cur += String.fromCharCode(W[byteVal] ?? byteVal);
+        }
         i += 3;
         continue;
       }
@@ -189,6 +199,20 @@ const rtfToHtml = (rtf: string): string => {
       }
 
       const pNum = param ? parseInt(param) : null;
+      if (word === 'u' && pNum !== null) {
+        let code = pNum;
+        if (code < 0) code = 65536 + code;
+        cur += String.fromCodePoint(code);
+        // Skip the ANSI fallback character(s) after \uN
+        if (i < rtf.length) {
+          if (rtf[i] === '\\' && i + 1 < rtf.length && rtf[i + 1] === "'") {
+            i += 4; // skip \'xx (backslash + apostrophe + 2 hex digits)
+          } else {
+            i++; // skip single fallback char (usually '?')
+          }
+        }
+        continue;
+      }
 
       flush();
       switch (word) {
@@ -211,6 +235,30 @@ const rtfToHtml = (rtf: string): string => {
         case 'line':
           cur += '\n';
           break;
+        case 'ldblquote':
+          cur += '\u201C';
+          break;
+        case 'rdblquote':
+          cur += '\u201D';
+          break;
+        case 'lquote':
+          cur += '\u2018';
+          break;
+        case 'rquote':
+          cur += '\u2019';
+          break;
+        case 'emdash':
+          cur += '\u2014';
+          break;
+        case 'endash':
+          cur += '\u2013';
+          break;
+        case 'bullet':
+          cur += '\u2022';
+          break;
+        case 'tab':
+          cur += '\t';
+          break;
       }
       continue;
     }
@@ -220,7 +268,7 @@ const rtfToHtml = (rtf: string): string => {
       continue;
     }
 
-    cur += ch;
+    cur += String.fromCodePoint(ch.codePointAt(0)!);
     i++;
   }
 
@@ -361,7 +409,7 @@ const sanitizeHtml = (html: string): string => {
     result += cleanNode(tmp.childNodes[c]);
   }
   result = result
-    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\t/g, ' ')
     .replace(/[ \u00A0]{2,}/g, (match) => {
       let out = '';
       for (let i = 0; i < match.length; i++) {
@@ -1469,14 +1517,21 @@ const RichTextEditor = ({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      const clipboardHtml = e.clipboardData.getData('text/html');
-      const clipboardText = e.clipboardData.getData('text/plain');
+     const clipboardHtml = e.clipboardData.getData('text/html');
+
+const clipboardText = e.clipboardData.getData('text/plain');
+
+const clipboardRtf = e.clipboardData.getData('text/rtf');
+
+// KEEP ORIGINAL UNICODE CHARACTERS
+
+const safeClipboardText = clipboardText;
+
 
       // DEBUG: Log clipboard contents to diagnose paste issues
       console.log('[PASTE DEBUG] types:', Array.from(e.clipboardData.types));
       console.log('[PASTE DEBUG] html:', clipboardHtml ? clipboardHtml.substring(0, 500) : '(empty)');
-      console.log('[PASTE DEBUG] text:', clipboardText ? clipboardText.substring(0, 200) : '(empty)');
-      const clipboardRtf = e.clipboardData.getData('text/rtf');
+      console.log('[PASTE DEBUG] text:', safeClipboardText ? safeClipboardText.substring(0, 200) : '(empty)');
       console.log('[PASTE DEBUG] rtf:', clipboardRtf ? clipboardRtf.substring(0, 1000) : '(empty)');
 
 
@@ -1528,17 +1583,17 @@ const RichTextEditor = ({
 
       let cleanedHtml: string;
       const plainTextToHtml = (text: string) =>
-        text
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>');
+ text
+   .replace(/&/g, '&amp;')
+   .replace(/</g, '&lt;')
+   .replace(/>/g, '&gt;')
+   .replace(/\r\n|\r|\n/g, '<br>');
 
       if (clipboardHtml) {
         cleanedHtml = sanitizeHtml(clipboardHtml);
         // If sanitized HTML is empty but we have plain text, fall back
-        if (!cleanedHtml.trim() && clipboardText) {
-          cleanedHtml = plainTextToHtml(clipboardText);
+        if (!cleanedHtml.trim() && safeClipboardText) {
+          cleanedHtml = plainTextToHtml(safeClipboardText);
         }
         // If sanitized HTML lost line breaks that exist in the plain text,
         // fall back to plain text so blank lines are preserved — BUT only
@@ -1550,15 +1605,15 @@ const RichTextEditor = ({
         );
         if (!hasFormattingTags) {
           const htmlBreaks = (cleanedHtml.match(/<br\s*\/?>/gi) || []).length;
-          const textBreaks = clipboardText
-            ? (clipboardText.match(/\n/g) || []).length
+          const textBreaks = safeClipboardText
+            ? (safeClipboardText.match(/\n/g) || []).length
             : 0;
           if (textBreaks > 0 && htmlBreaks < textBreaks) {
-            cleanedHtml = plainTextToHtml(clipboardText);
+            cleanedHtml = plainTextToHtml(safeClipboardText);
           }
         }
       } else {
-        cleanedHtml = plainTextToHtml(clipboardText || '');
+        cleanedHtml = plainTextToHtml(safeClipboardText || '');
       }
 
       if (!editorRef.current) return;
