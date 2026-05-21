@@ -307,7 +307,19 @@ const rtfToHtml = (rtf: string): string => {
     html += t;
   }
 
-  return html.trim();
+  html = html.replace(
+ /\*\s*HYPERLINK\s*"([^"]+)"/gi,
+ '$1'
+);
+html = html.replace(
+ /HYPERLINK\s*"([^"]+)"/gi,
+ '$1'
+);
+html = html.replace(
+ /(https?:\/\/[^\s]+)\s+\1/gi,
+ '$1'
+);
+return html.trim();
 };
 
 const sanitizeHtml = (html: string): string => {
@@ -1590,7 +1602,23 @@ const safeClipboardText = clipboardText;
    .replace(/\r\n|\r|\n/g, '<br>');
 
       if (clipboardHtml) {
-        cleanedHtml = sanitizeHtml(clipboardHtml);
+ cleanedHtml = sanitizeHtml(clipboardHtml);
+ // Remove duplicated URLs pasted from Excel / Office apps
+ cleanedHtml = cleanedHtml.replace(
+   /(https?:\/\/[^\s<]+)\s+\1/gi,
+   '$1'
+ );
+ // Normalize excessive spaces but preserve line breaks
+ // Normalize all weird Excel/Unicode spaces
+cleanedHtml = cleanedHtml
+ .replace(/\u00A0/g, ' ') // convert nbsp to normal space
+ .replace(/[\u2000-\u200B\u202F\u205F]/g, ' ') // unicode spaces
+ .replace(/[ \t]{2,}/g, ' ') // multiple spaces
+ .replace(/\s+([?,.:;!])/g, '$1'); // remove space before punctuation
+ // If sanitized HTML is empty but we have plain text, fall back
+ if (!cleanedHtml.trim() && safeClipboardText) {
+   cleanedHtml = plainTextToHtml(safeClipboardText);
+ }
         // If sanitized HTML is empty but we have plain text, fall back
         if (!cleanedHtml.trim() && safeClipboardText) {
           cleanedHtml = plainTextToHtml(safeClipboardText);
