@@ -444,7 +444,7 @@ const sanitizeHtml = (html: string): string => {
 const stripHtml = (html: string): string => {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
-  return tmp.textContent ?? '';
+  return (tmp.textContent ?? '').replace(/\u00A0/g, ' ');
 };
 
 const LINE_SPLIT_MARKER = '\x00LINE\x00';
@@ -478,18 +478,12 @@ const htmlToLines = (html: string): HtmlLine[] => {
   });
 
   // Keep all interior empty lines (blank paragraphs).
-  // Only strip leading and trailing empty lines.
   const result: HtmlLine[] = [];
   for (const line of mapped) {
     result.push(line);
   }
-  // Strip leading empty lines
-  while (result.length > 0 && result[0].text.length === 0) {
+  if (result.length > 1 && result[0].text.length === 0 && result[0].html.length === 0) {
     result.shift();
-  }
-  // Strip trailing empty lines
-  while (result.length > 0 && result[result.length - 1].text.length === 0) {
-    result.pop();
   }
   return result;
 };
@@ -639,10 +633,14 @@ const computeWordDiff = (
   // Helper to check if a string is whitespace-only (including non-breaking spaces)
   const isWsOnly = (s: string): boolean => /^[\s\u00A0]+$/.test(s);
 
+  const normalizeWhitespaceToken = (text: string): string =>
+    text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ');
+
   // Normalize whitespace tokens to single space for LCS alignment
   // This prevents identical whitespace tokens from being unmatched due to LCS path ambiguity
   const normalizeForLCS = (text: string): string =>
     isWsOnly(text) ? ' ' : text;
+
   const oldTexts = oldTokens.map((t) => normalizeForLCS(t.text));
   const newTexts = newTokens.map((t) => normalizeForLCS(t.text));
 
@@ -703,7 +701,10 @@ const computeWordDiff = (
     const word = oldTokens[oi].text;
     if (isWsOnly(word)) {
       // Compare whitespace lengths to detect genuine spacing differences
-      if (oldTokens[oi].text.length !== newTokens[ni].text.length) {
+      if (
+        normalizeWhitespaceToken(oldTokens[oi].text) !==
+        normalizeWhitespaceToken(newTokens[ni].text)
+      ) {
         oldTokenChangeTypes[oi] = 'spacing_change';
         newTokenChangeTypes[ni] = 'spacing_change';
       } else {
@@ -747,7 +748,10 @@ const computeWordDiff = (
   for (let k = 0; k < minWs; k++) {
     const oi = unmatchedOldWs[k];
     const ni = unmatchedNewWs[k];
-    if (oldTokens[oi].text.length !== newTokens[ni].text.length) {
+    if (
+      normalizeWhitespaceToken(oldTokens[oi].text) !==
+      normalizeWhitespaceToken(newTokens[ni].text)
+    ) {
       oldTokenChangeTypes[oi] = 'spacing_change';
       newTokenChangeTypes[ni] = 'spacing_change';
     } else {
@@ -1602,7 +1606,23 @@ const safeClipboardText = clipboardText;
    .replace(/\r\n|\r|\n/g, '<br>');
 
       if (clipboardHtml) {
- cleanedHtml = sanitizeHtml(clipboardHtml);
+ const textHasBreaks = /[\r\n]/.test(safeClipboardText || '');
+ const hasBlankLines = /\r?\n\s*\r?\n/.test(safeClipboardText || '');
+ const isExcel =
+   /<table/i.test(clipboardHtml) ||
+   /Microsoft Excel/i.test(clipboardHtml) ||
+   /mso-|xmlns:o=|x:|class=xl/i.test(clipboardHtml);
+ const shouldFlattenBreaks = !textHasBreaks || (isExcel && !hasBlankLines);
+ const htmlForSanitize = shouldFlattenBreaks
+   ? clipboardHtml
+       .replace(/<br\s*\/?>/gi, ' ')
+       .replace(/<\/?(?:p|div)[^>]*>/gi, ' ')
+       .replace(/<\/?(?:table|thead|tbody|tfoot|tr|td|th)[^>]*>/gi, ' ')
+   : clipboardHtml;
+ cleanedHtml = sanitizeHtml(htmlForSanitize);
+ if (shouldFlattenBreaks) {
+   cleanedHtml = cleanedHtml.replace(/[\r\n]+/g, ' ');
+ }
  // Remove duplicated URLs pasted from Excel / Office apps
  cleanedHtml = cleanedHtml.replace(
    /(https?:\/\/[^\s<]+)\s+\1/gi,
@@ -1610,11 +1630,19 @@ const safeClipboardText = clipboardText;
  );
  // Normalize excessive spaces but preserve line breaks
  // Normalize all weird Excel/Unicode spaces
-cleanedHtml = cleanedHtml
+ cleanedHtml = cleanedHtml
  .replace(/\u00A0/g, ' ') // convert nbsp to normal space
  .replace(/[\u2000-\u200B\u202F\u205F]/g, ' ') // unicode spaces
  .replace(/[ \t]{2,}/g, ' ') // multiple spaces
  .replace(/\s+([?,.:;!])/g, '$1'); // remove space before punctuation
+ // If we flattened breaks, collapse HTML <br> into spaces
+ if (shouldFlattenBreaks && /<br\s*\/?>(?!\s*<\/p>)/i.test(cleanedHtml)) {
+
+   cleanedHtml = cleanedHtml
+     .replace(/<br\s*\/?>/gi, ' ')
+     .replace(/\s{2,}/g, ' ')
+     .trim();
+ }
  // If sanitized HTML is empty but we have plain text, fall back
  if (!cleanedHtml.trim() && safeClipboardText) {
    cleanedHtml = plainTextToHtml(safeClipboardText);
