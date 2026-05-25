@@ -372,7 +372,7 @@ const sanitizeHtml = (html: string): string => {
 
   const cleanNode = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) {
-      return node.textContent ?? '';
+      return (node.textContent ?? '').replace(/[ \t\r\n]+/g, ' ');
     }
     if (node.nodeType === Node.COMMENT_NODE) {
       return '';
@@ -402,7 +402,25 @@ const sanitizeHtml = (html: string): string => {
     const style = el.style;
     let wrapped = childHtml;
     if (style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 700) {
-      wrapped = `<b>${wrapped}</b>`;
+      const hasFormattedChildren = Array.from(el.children).some((child) => {
+        const cs = (child as HTMLElement).style;
+        return cs && cs.fontWeight !== '';
+      });
+      if (hasFormattedChildren) {
+        let smartHtml = '';
+        for (let c = 0; c < el.childNodes.length; c++) {
+          const child = el.childNodes[c];
+          if (child.nodeType === Node.TEXT_NODE) {
+            const t = child.textContent ?? '';
+            smartHtml += t.trim() ? `<b>${t}</b>` : t;
+          } else {
+            smartHtml += cleanNode(child);
+          }
+        }
+        wrapped = smartHtml;
+      } else {
+        wrapped = `<b>${wrapped}</b>`;
+      }
     }
     if (style.fontStyle === 'italic') {
       wrapped = `<i>${wrapped}</i>`;
@@ -422,7 +440,8 @@ const sanitizeHtml = (html: string): string => {
   }
   result = result
     .replace(/\t/g, ' ')
-    .replace(/[ \u00A0]{2,}/g, (match) => {
+    .replace(/\u00A0/g, ' ')
+    .replace(/ {2,}/g, (match) => {
       let out = '';
       for (let i = 0; i < match.length; i++) {
         out += i % 2 === 0 ? '\u00A0' : ' ';
@@ -438,6 +457,14 @@ const sanitizeHtml = (html: string): string => {
   if (result.startsWith('\x01')) result = result.slice(1).trimStart();
   if (result.endsWith('\x01')) result = result.slice(0, -1).trimEnd();
   result = result.split('\x01').join('<br>');
+  // Normalize spaces at formatting tag boundaries to prevent visual double-spaces
+  // Move trailing space/nbsp from inside closing tag to outside
+  result = result.replace(/[\s\u00A0](<\/(?:b|i|u|s|strong|em)>)/g, '$1 ');
+  // Move leading space/nbsp from inside opening tag to outside
+  result = result.replace(/(<(?:b|i|u|s|strong|em)>)[\s\u00A0]/g, ' $1');
+  // Collapse only runs of regular spaces (tag boundary artifacts)
+  // Intentional multi-spaces use alternating \u00A0/space pattern and won't match
+  result = result.replace(/ {2,}/g, ' ');
   return result;
 };
 
@@ -473,7 +500,7 @@ const htmlToLines = (html: string): HtmlLine[] => {
     const clean = sanitizeHtml(part);
     return {
       html: clean,
-      text: stripHtml(clean).trim(),
+      text: stripHtml(clean).trim().replace(/\u00A0/g, ' '),
     };
   });
 
@@ -529,7 +556,23 @@ const tokenizeHtmlLine = (lineHtml: string): HtmlToken[] => {
     walkNode(tmp.childNodes[c], '', '');
   }
 
-  return tokens;
+  // Merge adjacent whitespace tokens to avoid false spacing diffs at tag boundaries
+  const merged: HtmlToken[] = [];
+  for (const t of tokens) {
+    const prev = merged[merged.length - 1];
+    if (prev && /^\s+$/.test(prev.text) && /^\s+$/.test(t.text)) {
+      prev.text = ' ';
+      prev.html = ' ';
+    } else {
+      merged.push({ ...t });
+    }
+  }
+
+  // Strip leading/trailing whitespace-only tokens to avoid false diffs from trailing nbsp
+  while (merged.length > 0 && /^[\s\u00A0]+$/.test(merged[0].text)) merged.shift();
+  while (merged.length > 0 && /^[\s\u00A0]+$/.test(merged[merged.length - 1].text)) merged.pop();
+
+  return merged;
 };
 
 const computeLCS = (left: string[], right: string[]): boolean[][] => {
@@ -636,6 +679,9 @@ const computeWordDiff = (
   const normalizeWhitespaceToken = (text: string): string =>
     text.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ');
 
+  const wsLength = (text: string): number =>
+    text.replace(/\u00A0/g, ' ').length;
+
   // Normalize whitespace tokens to single space for LCS alignment
   // This prevents identical whitespace tokens from being unmatched due to LCS path ambiguity
   const normalizeForLCS = (text: string): string =>
@@ -701,10 +747,8 @@ const computeWordDiff = (
     const word = oldTokens[oi].text;
     if (isWsOnly(word)) {
       // Compare whitespace lengths to detect genuine spacing differences
-      if (
-        normalizeWhitespaceToken(oldTokens[oi].text) !==
-        normalizeWhitespaceToken(newTokens[ni].text)
-      ) {
+      // Flag any genuine spacing difference (nbsp is normalized in sanitizeHtml)
+      if (Math.abs(wsLength(oldTokens[oi].text) - wsLength(newTokens[ni].text)) >= 1) {
         oldTokenChangeTypes[oi] = 'spacing_change';
         newTokenChangeTypes[ni] = 'spacing_change';
       } else {
@@ -748,10 +792,7 @@ const computeWordDiff = (
   for (let k = 0; k < minWs; k++) {
     const oi = unmatchedOldWs[k];
     const ni = unmatchedNewWs[k];
-    if (
-      normalizeWhitespaceToken(oldTokens[oi].text) !==
-      normalizeWhitespaceToken(newTokens[ni].text)
-    ) {
+    if (Math.abs(wsLength(oldTokens[oi].text) - wsLength(newTokens[ni].text)) >= 1) {
       oldTokenChangeTypes[oi] = 'spacing_change';
       newTokenChangeTypes[ni] = 'spacing_change';
     } else {
@@ -988,8 +1029,8 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
     return { left, right, explanations };
   }
 
-  const leftKeys = leftLines.map((l) => l.html);
-  const rightKeys = rightLines.map((l) => l.html);
+  const leftKeys = leftLines.map((l) => l.html.replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
+  const rightKeys = rightLines.map((l) => l.html.replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
   const inLCS = computeLCS(leftKeys, rightKeys);
 
   const left: DiffLine[] = [];
@@ -1386,6 +1427,37 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
       inLCS[0][li] &&
       inLCS[1][ri]
     ) {
+      // LCS matched but actual HTML may differ (e.g. spacing) — do token-level diff
+      console.log('[DIFF DEBUG] LCS matched li=', li, 'ri=', ri,
+        '\nleftHtml:', JSON.stringify(leftLines[li].html),
+        '\nrightHtml:', JSON.stringify(rightLines[ri].html),
+        '\nhtmlEqual:', leftLines[li].html === rightLines[ri].html);
+      if (leftLines[li].html !== rightLines[ri].html) {
+        const wordDiff = computeWordDiff(leftLines[li], rightLines[ri]);
+        const hasChanges = wordDiff.oldSegments.some((s) => s.highlighted);
+        if (hasChanges) {
+          left.push({
+            type: 'modified',
+            text: leftLines[li].text,
+            html: leftLines[li].html,
+            lineNumber: li + 1,
+            wordSegments: wordDiff.oldSegments,
+          });
+          right.push({
+            type: 'modified',
+            text: rightLines[ri].text,
+            html: rightLines[ri].html,
+            lineNumber: ri + 1,
+            wordSegments: wordDiff.newSegments,
+          });
+          for (const desc of wordDiff.explanations) {
+            explanations.push({ line: li + 1, description: desc, type: 'text_change' });
+          }
+          li++;
+          ri++;
+          continue;
+        }
+      }
       left.push({
         type: 'unchanged',
         text: leftLines[li].text,
@@ -1546,7 +1618,7 @@ const safeClipboardText = clipboardText;
 
       // DEBUG: Log clipboard contents to diagnose paste issues
       console.log('[PASTE DEBUG] types:', Array.from(e.clipboardData.types));
-      console.log('[PASTE DEBUG] html:', clipboardHtml ? clipboardHtml.substring(0, 500) : '(empty)');
+      console.log('[PASTE DEBUG] full html:', clipboardHtml);
       console.log('[PASTE DEBUG] text:', safeClipboardText ? safeClipboardText.substring(0, 200) : '(empty)');
       console.log('[PASTE DEBUG] rtf:', clipboardRtf ? clipboardRtf.substring(0, 1000) : '(empty)');
 
@@ -1603,9 +1675,11 @@ const safeClipboardText = clipboardText;
    .replace(/&/g, '&amp;')
    .replace(/</g, '&lt;')
    .replace(/>/g, '&gt;')
+   .replace(/ {2,}/g, (m: string) => { let o = ''; for (let i = 0; i < m.length; i++) o += i % 2 === 0 ? '\u00A0' : ' '; return o; })
    .replace(/\r\n|\r|\n/g, '<br>');
 
       if (clipboardHtml) {
+ 
  const textHasBreaks = /[\r\n]/.test(safeClipboardText || '');
  const hasBlankLines = /\r?\n\s*\r?\n/.test(safeClipboardText || '');
  const isExcel =
@@ -1617,9 +1691,18 @@ const safeClipboardText = clipboardText;
    ? clipboardHtml
        .replace(/<br\s*\/?>/gi, ' ')
        .replace(/<\/?(?:p|div)[^>]*>/gi, ' ')
-       .replace(/<\/?(?:table|thead|tbody|tfoot|tr|td|th)[^>]*>/gi, ' ')
+       .replace(/<\/?(?:table|thead|tbody|tfoot|tr)[^>]*>/gi, ' ')
+       .replace(/<(td|th)(\s[^>]*)?>/gi, '<span$2>')
+       .replace(/<\/(td|th)>/gi, '</span> ')
+       .replace(/ {2,}/g, ' ')
    : clipboardHtml;
- cleanedHtml = sanitizeHtml(htmlForSanitize);
+ // Preserve multiple spaces by converting to &nbsp; before DOM parsing collapses them
+ const spacePreserved = htmlForSanitize.replace(/ {2,}/g, (m: string) => {
+   let out = '';
+   for (let i = 0; i < m.length; i++) out += i % 2 === 0 ? '&nbsp;' : ' ';
+   return out;
+ });
+ cleanedHtml = sanitizeHtml(spacePreserved);
  if (shouldFlattenBreaks) {
    cleanedHtml = cleanedHtml.replace(/[\r\n]+/g, ' ');
  }
@@ -1631,16 +1714,13 @@ const safeClipboardText = clipboardText;
  // Normalize excessive spaces but preserve line breaks
  // Normalize all weird Excel/Unicode spaces
  cleanedHtml = cleanedHtml
- .replace(/\u00A0/g, ' ') // convert nbsp to normal space
- .replace(/[\u2000-\u200B\u202F\u205F]/g, ' ') // unicode spaces
- .replace(/[ \t]{2,}/g, ' ') // multiple spaces
- .replace(/\s+([?,.:;!])/g, '$1'); // remove space before punctuation
+ .replace(/[\u2000-\u200B\u202F\u205F]/g, ' '); // unicode spaces
  // If we flattened breaks, collapse HTML <br> into spaces
  if (shouldFlattenBreaks && /<br\s*\/?>(?!\s*<\/p>)/i.test(cleanedHtml)) {
 
    cleanedHtml = cleanedHtml
      .replace(/<br\s*\/?>/gi, ' ')
-     .replace(/\s{2,}/g, ' ')
+     .replace(/ {2,}/g, ' ')
      .trim();
  }
  // If sanitized HTML is empty but we have plain text, fall back
@@ -1678,8 +1758,14 @@ const safeClipboardText = clipboardText;
       const editorIsEmpty = !editorRef.current.textContent?.trim();
       if (editorIsEmpty) {
         editorRef.current.innerHTML = cleanedHtml;
+        // Move cursor to end only when editor was empty (innerHTML reset loses cursor)
+        const sel = window.getSelection();
+        if (sel) {
+          sel.selectAllChildren(editorRef.current);
+          sel.collapseToEnd();
+        }
       } else {
-        // Editor has existing content — try to insert at cursor
+        // Editor has existing content — insert at cursor (browser keeps cursor in place)
         editorRef.current.focus();
         const didInsert = document.execCommand('insertHTML', false, cleanedHtml);
         if (!didInsert) {
@@ -1760,6 +1846,9 @@ const btnSecondary =
   "rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700";
 
   const handleCompare = useCallback(() => {
+  console.log('[COMPARE DEBUG] leftHtml:', JSON.stringify(leftHtml));
+  console.log('[COMPARE DEBUG] rightHtml:', JSON.stringify(rightHtml));
+  console.log('[COMPARE DEBUG] htmlEqual:', leftHtml === rightHtml);
   const result = computeDiff(leftHtml, rightHtml);
 
   setDiffResult(result);
@@ -1922,8 +2011,6 @@ const btnSecondary =
   </div>
         {/* RIGHT SIDE */}
   <div className="flex justify-end items-center gap-3">
-    {renderStats()}
-
     <Button onPress={handleUndo} className={btnSecondary}>
       Undo
     </Button>
