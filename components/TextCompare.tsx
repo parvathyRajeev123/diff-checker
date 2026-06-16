@@ -80,12 +80,16 @@ const rtfToHtml = (rtf: string): string => {
     italic: boolean;
     underline: boolean;
     strike: boolean;
+    uc: number;
+    fontId: number;
   }
   const defaultFmt = (): FmtState => ({
     bold: false,
     italic: false,
     underline: false,
     strike: false,
+    uc: 1,
+    fontId: 0,
   });
 
   const segments: { text: string; fmt: FmtState }[] = [];
@@ -96,6 +100,46 @@ const rtfToHtml = (rtf: string): string => {
   let skipGroup = false;
   let skipDepth = 0;
   let depth = 0;
+
+  // Codepage-aware \' decoding
+  let ansicpg = 1252;
+  const cpLabels: Record<number, string> = {
+    874: 'windows-874', 932: 'shift-jis', 936: 'gbk', 949: 'euc-kr', 950: 'big5',
+    1250: 'windows-1250', 1251: 'windows-1251', 1252: 'windows-1252',
+    1253: 'windows-1253', 1254: 'windows-1254', 1255: 'windows-1255',
+    1256: 'windows-1256', 1257: 'windows-1257', 1258: 'windows-1258',
+    10000: 'macintosh',
+  };
+  const decoderCache: Record<number, TextDecoder | null> = {};
+  const getDecoder = (cp: number): TextDecoder | null => {
+    if (cp in decoderCache) return decoderCache[cp];
+    const label = cpLabels[cp];
+    let d: TextDecoder | null = null;
+    if (label) { try { d = new TextDecoder(label); } catch { /* unsupported */ } }
+    decoderCache[cp] = d;
+    return d;
+  };
+
+  // Map font charset numbers to codepages
+  const charsetToCp: Record<number, number> = {
+    0: 1252, 2: 42, 77: 10000, 128: 932, 129: 949, 130: 1361,
+    134: 936, 136: 950, 161: 1253, 162: 1254, 163: 1258,
+    177: 1255, 178: 1256, 186: 1257, 204: 1251, 222: 874, 238: 1250,
+  };
+  // Pre-scan font table: font ID → codepage
+  const fontCpMap: Record<number, number> = {};
+  const fontRe = /\{\\f(\d+)[^}]*\\fcharset(\d+)/g;
+  let fm;
+  while ((fm = fontRe.exec(rtf)) !== null) {
+    const fid = parseInt(fm[1]);
+    const cs = parseInt(fm[2]);
+    if (charsetToCp[cs] !== undefined) fontCpMap[fid] = charsetToCp[cs];
+  }
+
+  const getActiveDecoder = (): TextDecoder | null => {
+    const fontCp = fontCpMap[fmt.fontId];
+    return getDecoder(fontCp !== undefined ? fontCp : ansicpg);
+  };
 
   const flush = () => {
     if (cur) {
@@ -113,7 +157,7 @@ const rtfToHtml = (rtf: string): string => {
       const ahead = rtf.substring(i + 1, i + 20);
       if (
         !skipGroup &&
-        /^\\(fonttbl|colortbl|stylesheet|info|pict|header|footer)\b/.test(ahead)
+        /^(?:\\\*\\fldinst|\\(?:fonttbl|colortbl|stylesheet|info|pict|header|footer)\b)/.test(ahead)
       ) {
         skipGroup = true;
         skipDepth = depth;
@@ -158,21 +202,56 @@ const rtfToHtml = (rtf: string): string => {
         i++;
         continue;
       }
+      if (rtf[i] === '*') {
+        // \* marks an ignorable destination — skip this entire group
+        if (!skipGroup) {
+          flush();
+          skipGroup = true;
+          skipDepth = depth;
+        }
+        i++;
+        continue;
+      }
       if (rtf[i] === "'") {
         const hex = rtf.substring(i + 1, i + 3);
-        const byteVal = parseInt(hex, 16);
-        if (!isNaN(byteVal)) {
-          // Windows-1252 bytes 0x80-0x9F differ from Unicode codepoints
-          const W: Record<number, number> = {
-            0x91: 0x2018, 0x92: 0x2019, // ' '
-            0x93: 0x201C, 0x94: 0x201D, // " "
-            0x96: 0x2013, 0x97: 0x2014, // – —
-            0x85: 0x2026, 0x80: 0x20AC, // … €
-            0x82: 0x201A, 0x84: 0x201E, // ‚ „
-          };
-          cur += String.fromCharCode(W[byteVal] ?? byteVal);
+        const firstByte = parseInt(hex, 16);
+        if (!isNaN(firstByte)) {
+          const bytes = [firstByte];
+          let nextI = i + 3;
+          // Accumulate consecutive \'xx for multi-byte codepages (Big5, Shift-JIS, GBK)
+          if (firstByte >= 0x80) {
+            while (nextI < rtf.length) {
+              // Skip RTF line-wrapping
+              while (nextI < rtf.length && (rtf[nextI] === '\r' || rtf[nextI] === '\n')) nextI++;
+              if (nextI < rtf.length && rtf[nextI] === '\\' && nextI + 1 < rtf.length && rtf[nextI + 1] === "'") {
+                const nh = rtf.substring(nextI + 2, nextI + 4);
+                const nb = parseInt(nh, 16);
+                if (isNaN(nb)) break;
+                bytes.push(nb);
+                nextI += 4;
+              } else {
+                break;
+              }
+            }
+          }
+          const decoder = getActiveDecoder();
+          if (decoder) {
+            cur += decoder.decode(new Uint8Array(bytes));
+          } else {
+            // Fallback: Windows-1252 manual mapping for 0x80-0x9F
+            const W: Record<number, number> = {
+              0x80: 0x20AC, 0x82: 0x201A, 0x84: 0x201E, 0x85: 0x2026,
+              0x91: 0x2018, 0x92: 0x2019, 0x93: 0x201C, 0x94: 0x201D,
+              0x96: 0x2013, 0x97: 0x2014,
+            };
+            for (const b of bytes) {
+              cur += String.fromCharCode(W[b] ?? b);
+            }
+          }
+          i = nextI;
+        } else {
+          i += 3;
         }
-        i += 3;
         continue;
       }
 
@@ -203,12 +282,30 @@ const rtfToHtml = (rtf: string): string => {
         let code = pNum;
         if (code < 0) code = 65536 + code;
         cur += String.fromCodePoint(code);
-        // Skip the ANSI fallback character(s) after \uN
-        if (i < rtf.length) {
+        // Skip fmt.uc ANSI fallback character(s) after \uN
+        for (let skip = 0; skip < fmt.uc && i < rtf.length; skip++) {
+          // Skip RTF line-wrapping \r\n — not fallback bytes
+          while (i < rtf.length && (rtf[i] === '\r' || rtf[i] === '\n')) i++;
+          if (i >= rtf.length) break;
+          if (rtf[i] === '{' || rtf[i] === '}') {
+            break;
+          }
+          let byteVal = 0;
           if (rtf[i] === '\\' && i + 1 < rtf.length && rtf[i + 1] === "'") {
-            i += 4; // skip \'xx (backslash + apostrophe + 2 hex digits)
+            byteVal = parseInt(rtf.substring(i + 2, i + 4), 16) || 0;
+            i += 4; // skip \'xx
           } else {
-            i++; // skip single fallback char (usually '?')
+            byteVal = rtf.charCodeAt(i);
+            i++; // skip raw byte
+          }
+          // CJK lead byte (Big5/Shift-JIS/GBK): also consume the trail byte
+          if (byteVal >= 0x80 && i < rtf.length) {
+            if (rtf[i] === '\\' && i + 1 < rtf.length && rtf[i + 1] === "'") {
+              i += 4; // trail byte as \'xx
+            } else if (rtf[i] !== '\\' && rtf[i] !== '{' && rtf[i] !== '}') {
+              i++; // trail byte as raw char
+            }
+            skip++; // count trail byte toward uc total
           }
         }
         continue;
@@ -259,6 +356,18 @@ const rtfToHtml = (rtf: string): string => {
         case 'tab':
           cur += '\t';
           break;
+        case 'uc':
+          if (pNum !== null) fmt.uc = pNum;
+          break;
+        case 'ansicpg':
+          if (pNum !== null) ansicpg = pNum;
+          break;
+        case 'f':
+          if (pNum !== null) fmt.fontId = pNum;
+          break;
+        case 'deff':
+          if (pNum !== null) fmt.fontId = pNum;
+          break;
       }
       continue;
     }
@@ -293,27 +402,32 @@ const rtfToHtml = (rtf: string): string => {
   let html = '';
   for (const seg of merged) {
     if (!seg.text) continue;
-    let t = seg.text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\n/g, '<br>');
-
-    if (seg.fmt.bold) t = `<b>${t}</b>`;
-    if (seg.fmt.italic) t = `<i>${t}</i>`;
-    if (seg.fmt.underline) t = `<u>${t}</u>`;
-    if (seg.fmt.strike) t = `<s>${t}</s>`;
-
-    html += t;
+    // Split by newline so <br> is never inside formatting tags.
+    // Each part gets its own <b>/<i>/<u>/<s> wrapper.
+    const parts = seg.text.split('\n');
+    const wrappedParts = parts.map((part) => {
+      let t = part
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      if (t || parts.length === 1) {
+        if (seg.fmt.bold) t = `<b>${t}</b>`;
+        if (seg.fmt.italic) t = `<i>${t}</i>`;
+        if (seg.fmt.underline) t = `<u>${t}</u>`;
+        if (seg.fmt.strike) t = `<s>${t}</s>`;
+      }
+      return t;
+    });
+    html += wrappedParts.join('<br>');
   }
 
   html = html.replace(
- /\*\s*HYPERLINK\s*"([^"]+)"/gi,
- '$1'
+ /\*\s*HYPERLINK\s*"[^"]*"/gi,
+ ''
 );
 html = html.replace(
- /HYPERLINK\s*"([^"]+)"/gi,
- '$1'
+ /HYPERLINK\s*"[^"]*"/gi,
+ ''
 );
 html = html.replace(
  /(https?:\/\/[^\s]+)\s+\1/gi,
@@ -401,35 +515,45 @@ const sanitizeHtml = (html: string): string => {
     // Convert inline styles (from Sticky Notes, Excel, etc.) to HTML tags
     const style = el.style;
     let wrapped = childHtml;
-    if (style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 700) {
-      const hasFormattedChildren = Array.from(el.children).some((child) => {
+    const isBold = style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 700;
+    const isItalic = style.fontStyle === 'italic';
+    const isUnderline = !!(style.textDecoration?.includes('underline') || style.textDecorationLine?.includes('underline'));
+    const isStrike = !!(style.textDecoration?.includes('line-through') || style.textDecorationLine?.includes('line-through'));
+
+    if (isBold || isItalic || isUnderline || isStrike) {
+      const hasOverridingChildren = Array.from(el.children).some((child) => {
         const cs = (child as HTMLElement).style;
-        return cs && cs.fontWeight !== '';
+        if (!cs) return false;
+        if (isBold && cs.fontWeight !== '') return true;
+        if (isItalic && cs.fontStyle !== '') return true;
+        if ((isUnderline || isStrike) && (cs.textDecoration !== '' || cs.textDecorationLine !== '')) return true;
+        return false;
       });
-      if (hasFormattedChildren) {
+
+      if (hasOverridingChildren) {
         let smartHtml = '';
         for (let c = 0; c < el.childNodes.length; c++) {
           const child = el.childNodes[c];
           if (child.nodeType === Node.TEXT_NODE) {
-            const t = child.textContent ?? '';
-            smartHtml += t.trim() ? `<b>${t}</b>` : t;
+            let t = (child.textContent ?? '').replace(/[ \t\r\n]+/g, ' ');
+            if (t.trim()) {
+              if (isBold) t = `<b>${t}</b>`;
+              if (isItalic) t = `<i>${t}</i>`;
+              if (isUnderline) t = `<u>${t}</u>`;
+              if (isStrike) t = `<s>${t}</s>`;
+            }
+            smartHtml += t;
           } else {
             smartHtml += cleanNode(child);
           }
         }
         wrapped = smartHtml;
       } else {
-        wrapped = `<b>${wrapped}</b>`;
+        if (isBold) wrapped = `<b>${wrapped}</b>`;
+        if (isItalic) wrapped = `<i>${wrapped}</i>`;
+        if (isUnderline) wrapped = `<u>${wrapped}</u>`;
+        if (isStrike) wrapped = `<s>${wrapped}</s>`;
       }
-    }
-    if (style.fontStyle === 'italic') {
-      wrapped = `<i>${wrapped}</i>`;
-    }
-    if (style.textDecoration?.includes('underline') || style.textDecorationLine?.includes('underline')) {
-      wrapped = `<u>${wrapped}</u>`;
-    }
-    if (style.textDecoration?.includes('line-through') || style.textDecorationLine?.includes('line-through')) {
-      wrapped = `<s>${wrapped}</s>`;
     }
     return wrapped;
   };
@@ -685,7 +809,7 @@ const computeWordDiff = (
   // Normalize whitespace tokens to single space for LCS alignment
   // This prevents identical whitespace tokens from being unmatched due to LCS path ambiguity
   const normalizeForLCS = (text: string): string =>
-    isWsOnly(text) ? ' ' : text;
+    isWsOnly(text) ? ' ' : text.replace(/[\u200B-\u200F\u2028\u2029\uFEFF]/g, '');
 
   const oldTexts = oldTokens.map((t) => normalizeForLCS(t.text));
   const newTexts = newTokens.map((t) => normalizeForLCS(t.text));
@@ -936,8 +1060,10 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   //    that split the comparison at the wrong points.
   const leftNonEmptyLines = leftLines.filter((l) => l.text.length > 0);
   const rightNonEmptyLines = rightLines.filter((l) => l.text.length > 0);
+  const stripZW = (s: string): string =>
+    s.replace(/[\u200B-\u200F\u2028\u2029\uFEFF]/g, '');
   const normalizeWsGlobal = (s: string): string =>
-    s.replace(/[\s\u00A0]+/g, ' ').trim();
+    stripZW(s).replace(/[\s\u00A0]+/g, ' ').trim();
   const leftFullText = normalizeWsGlobal(
     leftNonEmptyLines.map((l) => l.text).join(' ')
   );
@@ -947,14 +1073,14 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
 
   const linesAreIdentical =
     leftLines.length === rightLines.length &&
-    leftLines.every((l, i) => l.html === rightLines[i].html);
+    leftLines.every((l, i) => stripZW(l.html) === stripZW(rightLines[i].html));
 
   // Check whether the line *structure* actually differs (not just formatting).
   // If line count is the same and text per line matches, it's a formatting-only
   // change (bold/italic/etc.) — let the normal diff handle it.
   const lineStructureDiffers =
     leftLines.length !== rightLines.length ||
-    leftLines.some((l, i) => l.text !== rightLines[i].text);
+    leftLines.some((l, i) => stripZW(l.text) !== stripZW(rightLines[i].text));
 
   // ── Shared helpers for marker-based line-break handling ──
   // These are used by both the pre-check (same text, different breaks)
@@ -1029,8 +1155,8 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
     return { left, right, explanations };
   }
 
-  const leftKeys = leftLines.map((l) => l.html.replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
-  const rightKeys = rightLines.map((l) => l.html.replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
+  const leftKeys = leftLines.map((l) => stripZW(l.text).replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
+  const rightKeys = rightLines.map((l) => stripZW(l.text).replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
   const inLCS = computeLCS(leftKeys, rightKeys);
 
   const left: DiffLine[] = [];
@@ -1432,7 +1558,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
         '\nleftHtml:', JSON.stringify(leftLines[li].html),
         '\nrightHtml:', JSON.stringify(rightLines[ri].html),
         '\nhtmlEqual:', leftLines[li].html === rightLines[ri].html);
-      if (leftLines[li].html !== rightLines[ri].html) {
+      if (stripZW(leftLines[li].html) !== stripZW(rightLines[ri].html)) {
         const wordDiff = computeWordDiff(leftLines[li], rightLines[ri]);
         const hasChanges = wordDiff.oldSegments.some((s) => s.highlighted);
         if (hasChanges) {
@@ -1650,18 +1776,31 @@ const safeClipboardText = clipboardText;
 
 
       // No HTML and no RTF (pure plain text or VDI without RTF) —
-      // let the browser handle the paste natively, then sanitize.
+      // prevent default and insert escaped text ourselves so angle brackets
+      // (e.g. <Service Code>) aren't interpreted as HTML by contentEditable.
       if (!clipboardHtml) {
-        setTimeout(() => {
-          if (!editorRef.current) return;
-          const rawHtml = editorRef.current.innerHTML;
-          const cleaned = sanitizeHtml(rawHtml);
-          console.log('[PASTE DEBUG] after sanitize:', cleaned.substring(0, 500));
-          editorRef.current.innerHTML = cleaned;
-          internalHtmlRef.current = cleaned;
+        e.preventDefault();
+        const escaped = (safeClipboardText || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\r\n|\r|\n/g, '<br>');
+        if (editorRef.current) {
+          const editorIsEmpty = !editorRef.current.textContent?.trim();
+          if (editorIsEmpty) {
+            editorRef.current.innerHTML = escaped;
+          } else {
+            editorRef.current.focus();
+            const didInsert = document.execCommand('insertHTML', false, escaped);
+            if (!didInsert) {
+              editorRef.current.innerHTML += escaped;
+            }
+          }
+          const current = editorRef.current.innerHTML;
+          internalHtmlRef.current = current;
           setIsEmpty(!editorRef.current.textContent?.trim());
-          onHtmlChange(cleaned);
-        }, 50);
+          onHtmlChange(current);
+        }
         return;
       }
 
@@ -1679,7 +1818,7 @@ const safeClipboardText = clipboardText;
    .replace(/\r\n|\r|\n/g, '<br>');
 
       if (clipboardHtml) {
- 
+
  const textHasBreaks = /[\r\n]/.test(safeClipboardText || '');
  const hasBlankLines = /\r?\n\s*\r?\n/.test(safeClipboardText || '');
  const isExcel =
@@ -1834,7 +1973,7 @@ const TextCompare = () => {
   setHistory(newHistory);
   setHistoryIndex(newHistory.length - 1);
 };
-  
+
 
   const btnPrimary =
 "rounded-md bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700";
@@ -2065,7 +2204,7 @@ const btnSecondary =
               {renderDiffPanel(diffResult.right, 'right')}
             </div>
           </div>
-          {renderChangeLegend()} 
+          {renderChangeLegend()}
         </>
       ) : null}
     </div>
