@@ -809,7 +809,7 @@ const computeWordDiff = (
   // Normalize whitespace tokens to single space for LCS alignment
   // This prevents identical whitespace tokens from being unmatched due to LCS path ambiguity
   const normalizeForLCS = (text: string): string =>
-    isWsOnly(text) ? ' ' : text;
+    isWsOnly(text) ? ' ' : text.replace(/[\u200B-\u200F\u2028\u2029\uFEFF]/g, '');
 
   const oldTexts = oldTokens.map((t) => normalizeForLCS(t.text));
   const newTexts = newTokens.map((t) => normalizeForLCS(t.text));
@@ -1060,8 +1060,10 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   //    that split the comparison at the wrong points.
   const leftNonEmptyLines = leftLines.filter((l) => l.text.length > 0);
   const rightNonEmptyLines = rightLines.filter((l) => l.text.length > 0);
+  const stripZW = (s: string): string =>
+    s.replace(/[\u200B-\u200F\u2028\u2029\uFEFF]/g, '');
   const normalizeWsGlobal = (s: string): string =>
-    s.replace(/[\s\u00A0]+/g, ' ').trim();
+    stripZW(s).replace(/[\s\u00A0]+/g, ' ').trim();
   const leftFullText = normalizeWsGlobal(
     leftNonEmptyLines.map((l) => l.text).join(' ')
   );
@@ -1071,14 +1073,14 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
 
   const linesAreIdentical =
     leftLines.length === rightLines.length &&
-    leftLines.every((l, i) => l.html === rightLines[i].html);
+    leftLines.every((l, i) => stripZW(l.html) === stripZW(rightLines[i].html));
 
   // Check whether the line *structure* actually differs (not just formatting).
   // If line count is the same and text per line matches, it's a formatting-only
   // change (bold/italic/etc.) — let the normal diff handle it.
   const lineStructureDiffers =
     leftLines.length !== rightLines.length ||
-    leftLines.some((l, i) => l.text !== rightLines[i].text);
+    leftLines.some((l, i) => stripZW(l.text) !== stripZW(rightLines[i].text));
 
   // ── Shared helpers for marker-based line-break handling ──
   // These are used by both the pre-check (same text, different breaks)
@@ -1153,8 +1155,8 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
     return { left, right, explanations };
   }
 
-  const leftKeys = leftLines.map((l) => l.text.replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
-  const rightKeys = rightLines.map((l) => l.text.replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
+  const leftKeys = leftLines.map((l) => stripZW(l.text).replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
+  const rightKeys = rightLines.map((l) => stripZW(l.text).replace(/\u00A0/g, ' ').replace(/ +/g, ' '));
   const inLCS = computeLCS(leftKeys, rightKeys);
 
   const left: DiffLine[] = [];
@@ -1556,7 +1558,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
         '\nleftHtml:', JSON.stringify(leftLines[li].html),
         '\nrightHtml:', JSON.stringify(rightLines[ri].html),
         '\nhtmlEqual:', leftLines[li].html === rightLines[ri].html);
-      if (leftLines[li].html !== rightLines[ri].html) {
+      if (stripZW(leftLines[li].html) !== stripZW(rightLines[ri].html)) {
         const wordDiff = computeWordDiff(leftLines[li], rightLines[ri]);
         const hasChanges = wordDiff.oldSegments.some((s) => s.highlighted);
         if (hasChanges) {
