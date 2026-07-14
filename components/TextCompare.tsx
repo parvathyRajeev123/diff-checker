@@ -725,13 +725,14 @@ const tokenizeHtmlLine = (lineHtml: string): HtmlToken[] => {
     walkNode(tmp.childNodes[c], '', '');
   }
 
-  // Merge adjacent whitespace tokens to avoid false spacing diffs at tag boundaries
+  // Merge adjacent whitespace tokens at tag boundaries into a single token,
+  // but preserve total length so genuine spacing differences are detected.
   const merged: HtmlToken[] = [];
   for (const t of tokens) {
     const prev = merged[merged.length - 1];
     if (prev && /^\s+$/.test(prev.text) && /^\s+$/.test(t.text)) {
-      prev.text = ' ';
-      prev.html = ' ';
+      prev.text += t.text;
+      prev.html += t.html;
     } else {
       merged.push({ ...t });
     }
