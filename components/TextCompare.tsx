@@ -725,12 +725,20 @@ const tokenizeHtmlLine = (lineHtml: string): HtmlToken[] => {
     walkNode(tmp.childNodes[c], '', '');
   }
 
-  // Merge adjacent whitespace tokens at tag boundaries into a single token,
-  // but preserve total length so genuine spacing differences are detected.
+  // Merge adjacent tokens split by tag boundaries:
+  // - Adjacent whitespace tokens: concatenate to preserve total length
+  // - Adjacent non-whitespace tokens: concatenate so e.g. "word" + "." (from
+  //   <b>.</b>) becomes "word." matching the other side's single "word." token
   const merged: HtmlToken[] = [];
   for (const t of tokens) {
     const prev = merged[merged.length - 1];
-    if (prev && /^\s+$/.test(prev.text) && /^\s+$/.test(t.text)) {
+    if (!prev) {
+      merged.push({ ...t });
+      continue;
+    }
+    const prevIsWs = /^\s+$/.test(prev.text);
+    const curIsWs = /^\s+$/.test(t.text);
+    if (prevIsWs === curIsWs) {
       prev.text += t.text;
       prev.html += t.html;
     } else {
