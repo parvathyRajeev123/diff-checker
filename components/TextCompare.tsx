@@ -1886,6 +1886,13 @@ const safeClipboardText = clipboardText;
    return out;
  });
  cleanedHtml = sanitizeHtml(spacePreserved);
+ console.log('[PASTE DEBUG] html has supportFields:', /supportFields/i.test(clipboardHtml));
+ console.log('[PASTE DEBUG] html has HYPERLINK:', /HYPERLINK/i.test(clipboardHtml));
+ console.log('[PASTE DEBUG] html has <a tag:', /<a[\s>]/i.test(clipboardHtml));
+ console.log('[PASTE DEBUG] html has underline style:', /text-decoration[^;]*underline/i.test(clipboardHtml));
+ console.log('[PASTE DEBUG] sanitized has <a:', /<a[\s>]/i.test(cleanedHtml));
+ console.log('[PASTE DEBUG] sanitized has <u:', /<u[\s>]/i.test(cleanedHtml));
+ console.log('[PASTE DEBUG] sanitized output (first 1000):', cleanedHtml.substring(0, 1000));
  if (shouldFlattenBreaks) {
    cleanedHtml = cleanedHtml.replace(/[\r\n]+/g, ' ');
  }
