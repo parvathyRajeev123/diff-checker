@@ -218,6 +218,12 @@ const rtfToHtml = (rtf: string): string => {
         // \* marks an ignorable destination — skip this entire group
         if (!skipGroup) {
           flush();
+          const starAhead = rtf.substring(i + 1, i + 500);
+          const hlMatch = starAhead.match(/\\fldinst\s*\{?\s*HYPERLINK\s+"([^"]+)"/i)
+            || starAhead.match(/HYPERLINK\s+"([^"]+)"/i);
+          if (hlMatch) {
+            pendingHyperlinkUrl = hlMatch[1];
+          }
           skipGroup = true;
           skipDepth = depth;
         }
@@ -1805,6 +1811,7 @@ const safeClipboardText = clipboardText;
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
+          .replace(/(https?:\/\/[^\s&<]+)/g, '<a href="$1">$1</a>')
           .replace(/\r\n|\r|\n/g, '<br>');
         if (editorRef.current) {
           const editorIsEmpty = !editorRef.current.textContent?.trim();
