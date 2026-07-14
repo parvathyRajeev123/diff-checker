@@ -1167,6 +1167,11 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
       return { ...seg, html: seg.html.replace(markerRe, '<br>') };
     });
 
+  console.log('[DIFF DEBUG] pre-check:',
+    'linesAreIdentical:', linesAreIdentical,
+    'leftFullText===rightFullText:', leftFullText === rightFullText,
+    'lineStructureDiffers:', lineStructureDiffers,
+    '\nleftLines:', leftLines.length, 'rightLines:', rightLines.length);
   if (
     !linesAreIdentical &&
     leftFullText === rightFullText &&
@@ -1606,6 +1611,9 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
       if (stripZW(leftLines[li].html) !== stripZW(rightLines[ri].html)) {
         const wordDiff = computeWordDiff(leftLines[li], rightLines[ri]);
         const hasChanges = wordDiff.oldSegments.some((s) => s.highlighted);
+        console.log('[DIFF DEBUG] wordDiff hasChanges:', hasChanges,
+          '\nhighlighted old:', wordDiff.oldSegments.filter(s => s.highlighted).map(s => ({t: s.text, ct: s.changeType, h: s.html.substring(0, 50)})),
+          '\nhighlighted new:', wordDiff.newSegments.filter(s => s.highlighted).map(s => ({t: s.text, ct: s.changeType, h: s.html.substring(0, 50)})));
         if (hasChanges) {
           left.push({
             type: 'modified',
