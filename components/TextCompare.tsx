@@ -1125,7 +1125,7 @@ const computeDiff = (leftHtml: string, rightHtml: string): DiffResult => {
   // change (bold/italic/etc.) — let the normal diff handle it.
   const lineStructureDiffers =
     leftLines.length !== rightLines.length ||
-    leftLines.some((l, i) => stripZW(l.text) !== stripZW(rightLines[i].text));
+    leftLines.some((l, i) => normalizeWsGlobal(l.text) !== normalizeWsGlobal(rightLines[i].text));
 
   // ── Shared helpers for marker-based line-break handling ──
   // These are used by both the pre-check (same text, different breaks)
