@@ -82,6 +82,7 @@ const rtfToHtml = (rtf: string): string => {
     strike: boolean;
     uc: number;
     fontId: number;
+    hyperlinkUrl: string | null;
   }
   const defaultFmt = (): FmtState => ({
     bold: false,
@@ -90,6 +91,7 @@ const rtfToHtml = (rtf: string): string => {
     strike: false,
     uc: 1,
     fontId: 0,
+    hyperlinkUrl: null,
   });
 
   const segments: { text: string; fmt: FmtState }[] = [];
@@ -100,6 +102,7 @@ const rtfToHtml = (rtf: string): string => {
   let skipGroup = false;
   let skipDepth = 0;
   let depth = 0;
+  let pendingHyperlinkUrl: string | null = null;
 
   // Codepage-aware \' decoding
   let ansicpg = 1252;
@@ -159,8 +162,17 @@ const rtfToHtml = (rtf: string): string => {
         !skipGroup &&
         /^(?:\\\*\\fldinst|\\(?:fonttbl|colortbl|stylesheet|info|pict|header|footer)\b)/.test(ahead)
       ) {
+        if (/^\\\*\\fldinst/.test(ahead)) {
+          const urlMatch = rtf.substring(i + 1, i + 500).match(/HYPERLINK\s+"([^"]+)"/i);
+          if (urlMatch) {
+            pendingHyperlinkUrl = urlMatch[1];
+          }
+        }
         skipGroup = true;
         skipDepth = depth;
+      } else if (!skipGroup && pendingHyperlinkUrl) {
+        fmt.hyperlinkUrl = pendingHyperlinkUrl;
+        pendingHyperlinkUrl = null;
       }
       i++;
       continue;
@@ -391,7 +403,8 @@ const rtfToHtml = (rtf: string): string => {
       last.fmt.bold === seg.fmt.bold &&
       last.fmt.italic === seg.fmt.italic &&
       last.fmt.underline === seg.fmt.underline &&
-      last.fmt.strike === seg.fmt.strike
+      last.fmt.strike === seg.fmt.strike &&
+      last.fmt.hyperlinkUrl === seg.fmt.hyperlinkUrl
     ) {
       last.text += seg.text;
     } else {
@@ -415,6 +428,7 @@ const rtfToHtml = (rtf: string): string => {
         if (seg.fmt.italic) t = `<i>${t}</i>`;
         if (seg.fmt.underline) t = `<u>${t}</u>`;
         if (seg.fmt.strike) t = `<s>${t}</s>`;
+        if (seg.fmt.hyperlinkUrl) t = `<a href="${seg.fmt.hyperlinkUrl.replace(/"/g, '&quot;')}">${t}</a>`;
       }
       return t;
     });
@@ -505,6 +519,13 @@ const sanitizeHtml = (html: string): string => {
     }
 
     if (tag === 'br') return '\x01';
+    if (tag === 'a') {
+      const href = el.getAttribute('href');
+      if (href) {
+        return `<a href="${href.replace(/"/g, '&quot;')}">${childHtml}</a>`;
+      }
+      return childHtml;
+    }
     if (ALLOWED_TAGS.has(tag)) {
       return `<${tag}>${childHtml}</${tag}>`;
     }
@@ -1875,7 +1896,7 @@ const safeClipboardText = clipboardText;
         // when the sanitized HTML has no formatting tags.  Falling back to
         // plain text when formatting (bold/italic/underline) is present
         // would discard the formatting the user pasted from Word, etc.
-        const hasFormattingTags = /<(b|strong|i|em|u|s|strike|sub|sup)\b/i.test(
+        const hasFormattingTags = /<(b|strong|i|em|u|s|strike|sub|sup|a)\b/i.test(
           cleanedHtml
         );
         if (!hasFormattingTags) {
