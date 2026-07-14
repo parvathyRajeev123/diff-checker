@@ -551,6 +551,12 @@ const sanitizeHtml = (html: string): string => {
       return childHtml;
     }
     if (ALLOWED_TAGS.has(tag)) {
+      // Strip formatting tags that wrap only punctuation/symbols — common
+      // VDI/Word artifact where formatting leaks to adjacent punctuation
+      const innerText = childHtml.replace(/<[^>]+>/g, '');
+      if (innerText.length > 0 && /^[\s\p{P}\p{S}]*$/u.test(innerText)) {
+        return childHtml;
+      }
       return `<${tag}>${childHtml}</${tag}>`;
     }
     if (tag === 'p' || tag === 'div') {
