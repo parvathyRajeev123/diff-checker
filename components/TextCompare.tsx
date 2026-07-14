@@ -544,7 +544,9 @@ const sanitizeHtml = (html: string): string => {
     if (tag === 'a') {
       const href = el.getAttribute('href');
       if (href) {
-        return `<a href="${href.replace(/"/g, '&quot;')}">${childHtml}</a>`;
+        // Wrap in <u> since Tailwind's preflight resets link underlines
+        const inner = /<u[\s>]/i.test(childHtml) ? childHtml : `<u>${childHtml}</u>`;
+        return `<a href="${href.replace(/"/g, '&quot;')}">${inner}</a>`;
       }
       return childHtml;
     }
@@ -1977,7 +1979,7 @@ const safeClipboardText = clipboardText;
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
-        className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+        className="h-[500px] w-full overflow-auto rounded border border-gray-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none [&_a]:text-blue-600 [&_a]:underline"
         onInput={handleInput}
         onPaste={handlePaste}
       />
@@ -2084,7 +2086,7 @@ const btnSecondary =
 
   const renderDiffPanel = (lines: DiffLine[], side: 'left' | 'right') => {
     return (
-      <div className="overflow-auto rounded border border-gray-200 bg-white text-sm">
+      <div className="overflow-auto rounded border border-gray-200 bg-white text-sm [&_a]:text-blue-600 [&_a]:underline">
         {lines.map((line, index) => (
           <div
             key={`${side}-${index}`}
